@@ -483,6 +483,36 @@ void parse_datatype(struct datatype* dtype)
     parse_datatype_type(dtype);
     parse_datatype_modifiers(dtype);
 }
+
+bool parser_is_int_valid_after_datatype(struct datatype* dtype)
+{
+    return dtype->type == DATA_TYPE_LONG || dtype->type == DATA_TYPE_FLOAT || dtype->type == DATA_TYPE_DOUBLE;
+}
+
+/*
+    long int abc;
+    我们要做的是忽略int ，long int 就是 long
+*/
+void parser_ignore_int(struct datatype* dtype)
+{
+    if(!token_is_keyword(token_peek_next(),"int"))
+    {
+        // No interger to ignore.
+        return;
+    }
+
+    if(!parser_is_int_valid_after_datatype(dtype))
+    {
+        compiler_error(current_process, "You provided a secondary \"int\" type however its not supported with this current abbrevation\n");
+    }
+
+    // Ignore the "int" token
+    token_next();
+}
+
+
+
+
 void parse_variable_function_or_struct_union(struct history* history)
 {
     struct datatype dtype;
@@ -497,7 +527,6 @@ void parse_keyword(struct history* history)
         parse_variable_function_or_struct_union(history);
         return;
     }
-
 
 }
 
