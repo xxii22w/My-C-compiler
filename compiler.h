@@ -163,6 +163,19 @@ struct scope
     struct scope* parent;
 };
 
+enum
+{
+    SYMBOL_TYPE_NODE,
+    SYMBOL_TYPE_MATIVE_FUNCTION,
+    SYMBOL_TYPE_UNKNOWN
+};
+
+struct symbol
+{
+    const char* name;
+    int type;
+    void* data;
+};
 
 struct compile_process
 {
@@ -189,6 +202,16 @@ struct compile_process
         struct scope* root;
         struct scope* current;
     } scope;
+
+    // 符号表
+    struct 
+    {
+        // current active symbol table. struct symbol*
+        struct vector* table;
+
+        // struct vector* mulyiple symbol tables stored int here...
+        struct vector* tables;
+    }symbols;
 };
 
 enum

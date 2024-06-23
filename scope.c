@@ -1,6 +1,6 @@
 #include "compiler.h"
 #include "helpers/vector.h"
-#include <memory>
+#include <memory.h>
 #include <stdlib.h>
 #include <assert.h>
 
@@ -8,7 +8,7 @@ struct scope* scope_alloc()
 {
     struct scope* scope = calloc(1,sizeof(struct scope));
     scope->entities = vector_create(sizeof(void*));
-    vector_set_peek_pointer(scope->entities);
+    vector_set_peek_pointer_end(scope->entities);
     vector_set_flag(scope->entities,VECTOR_FLAG_PEEK_DECREMENT);
     return scope;
 }
@@ -36,10 +36,10 @@ void scope_free_root(struct compile_process* process)
     process->scope.current = NULL;
 }
 
-struct scope* scope_new(struct compile_process* porcess)
+struct scope* scope_new(struct compile_process* process,int flags)
 {
-    assert(porcess->scope.root);
-    assert(porcess->scope.current);
+    assert(process->scope.root);
+    assert(process->scope.current);
 
     struct scope* new_scope = scope_alloc();
     new_scope->flags = flags;
