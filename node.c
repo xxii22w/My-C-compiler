@@ -18,7 +18,7 @@ void node_push(struct node* node)
 
 struct node* node_peek_or_null()
 {
-    return vector_back_or_null(node_vector);
+    return vector_back_ptr_or_null(node_vector);
 }
 
 struct node* node_peek()
@@ -29,7 +29,7 @@ struct node* node_peek()
 struct node* node_pop()
 {
     struct node* last_node = vector_back_ptr(node_vector);
-    struct node* last_node_root = vector_empty(node_vector) ? NULL : vector_back_ptr(node_vector_root);
+    struct node* last_node_root = vector_empty(node_vector) ? NULL : vector_back_ptr_or_null(node_vector_root);
 
     vector_pop(node_vector);
 
@@ -44,8 +44,7 @@ struct node* node_pop()
 // 表达式所支持的类型
 bool node_is_expressionable(struct node* node)
 {
-    return node->type == NODE_TYPE_EXPRESSION || node->type == NODE_TYPE_EXPRESSION_PARENTHESES || node->type == NODE_TYPE_UNARY || node->type == NODE_TYPE_IDENTIFIER ||
-        node->type == NODE_TYPE_NUMBER || node->type == NODE_TYPE_STRING;
+    return node->type == NODE_TYPE_EXPRESSION || node->type == NODE_TYPE_EXPRESSION_PARENTHESES || node->type == NODE_TYPE_UNARY || node->type == NODE_TYPE_IDENTIFIER || node->type == NODE_TYPE_NUMBER || node->type == NODE_TYPE_STRING;
 }
 
 struct node* node_peek_expressionable_or_null()
@@ -60,16 +59,11 @@ void make_exp_node(struct node* left_node, struct node* right_node, const char* 
     assert(right_node);
     node_create(&(struct node){.type=NODE_TYPE_EXPRESSION,.exp.left=left_node,.exp.right=right_node,.exp.op=op});
 }
-
 struct node* node_create(struct node* _node)
 {
     struct node* node = malloc(sizeof(struct node));
-    memcpy(node,_node,sizeof(struct node));
+    memcpy(node, _node, sizeof(struct node));
     #warning "We should set the binded owner and binded function here"
     node_push(node);
     return node;
 }
-
-
-
-
