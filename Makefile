@@ -1,5 +1,5 @@
 OBJECTS= ./build/compiler.o ./build/cprocess.o ./build/lexer.o ./build/token.o ./build/lex_process.o ./build/parser.o ./build/datatype.o \
-./build/scope.o ./build/node.o ./build/expressionable.o ./build/helpers/buffer.o ./build/helpers/vector.o 
+./build/array.o ./build/scope.o ./build/node.o ./build/expressionable.o ./build/helpers/buffer.o ./build/helpers/vector.o 
 INCLUDES= -I./
 
 all: ${OBJECTS}
@@ -34,6 +34,9 @@ all: ${OBJECTS}
 
 ./build/datatype.o: ./datatype.c
 	gcc datatype.c ${INCLUDES} -o ./build/datatype.o -g -c
+
+./build/array.o: ./array.c
+	gcc array.c ${INCLUDES} -o ./build/array.o -g -c
 
 ./build/helpers/buffer.o: ./helpers/buffer.c
 	gcc ./helpers/buffer.c ${INCLUDES} -o ./build/helpers/buffer.o -g -c
