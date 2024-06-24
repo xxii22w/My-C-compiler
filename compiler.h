@@ -342,6 +342,40 @@ struct node
             // int x[50]; [50] would be our bracket node. The inner would NODE_TYPE_NUMBER value of 50
             struct node* inner;
         }bracket;
+
+        struct _struct 
+        {
+            const char* name;
+            struct node* body_n;
+
+            /**
+             * struct abc
+             * {
+             * 
+             * } var_name;
+             * 
+             * NULL if no variable attached to structure.
+             * 
+             */
+            struct node* var;
+        }_struct;
+
+        struct body
+        {
+            /*
+                struct node* vector of statements
+            */
+        struct vector* statements;
+
+        // 本体内部组合变量的大小
+        size_t size;
+
+        // 字节对齐
+        bool padded;
+
+        // 指向语句向量中最大变量节点的指针
+        struct node* largest_var_node;
+        }body;
     };
 
     union 
@@ -437,11 +471,16 @@ bool keyword_is_datatype(const char *str);
 bool token_is_primitive_keyword(struct token* token);
 
 bool datatype_is_struct_or_union_for_name(const char* name);
+size_t datatype_size_for_array_access(struct datatype* dtype);
+size_t datatype_element_size(struct datatype* dtype);
+size_t datatype_size_no_ptr(struct datatype* dtype);
+size_t datatype_size(struct datatype* dtype);
 bool token_is_operator(struct token* token, const char* val);
 
 struct node* node_create(struct node* _node);
 void make_exp_node(struct node* left_node,struct node* right_node,const char* op);
 void make_bracker_node(struct node* node);
+void make_body_node(struct vector* body_vec, size_t size, bool padded, struct node* largest_var_node);
 
 struct node* node_pop();
 struct node* node_peek();
@@ -459,6 +498,38 @@ struct vector* array_brackets_node_vector(struct array_brackets* brackets);
 size_t array_brackets_calculate_size_from_index(struct datatype* dtype, struct array_brackets* brackets, int index);
 size_t array_brackets_calculate_size(struct datatype* dtype, struct array_brackets* brackets);
 int array_total_indexes(struct datatype* dtype);
+
+bool datatype_is_struct_or_union(struct datatype* dtype);
+
+/**
+ * @brief 从给定的变量节点获取变量大小
+ * 
+ * @param var_node 
+ * @return size_t 
+ */
+size_t variable_size(struct node* var_node);
+/**
+ * @brief 求和变量列表节点内所有变量节点的变量大小返回结果
+ * 
+ * @param var_list_node 
+ * @return size_t The sum of all variable node sizes in the list.
+ */
+size_t variable_size_for_list(struct node* var_list_node);
+
+
+struct scope* scope_new(struct compile_process* process, int flags);
+struct scope* scope_create_root(struct compile_process* process);
+void scope_free_root(struct compile_process* process);
+void scope_iteration_start(struct scope* scope);
+void scope_iteration_end(struct scope* scope);
+void* scope_iterate_back(struct scope* scope);
+void* scope_last_entity_at_scope(struct scope* scope);
+void* scope_last_entity_from_scope_stop_at(struct scope* scope, struct scope* stop_scope);
+void* scope_last_entity_stop_at(struct compile_process* process, struct scope* stop_scope);
+void* scope_last_entity(struct compile_process* process);
+void scope_push(struct compile_process* process, void* ptr, size_t elem_size);
+void scope_finish(struct compile_process* process);
+struct scope* scope_current(struct compile_process* process);
 
 #define TOTAL_OPERATOR_GROUPS 14
 #define MAX_OPERATORS_IN_GROUP 12

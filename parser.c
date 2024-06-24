@@ -5,6 +5,7 @@
 static struct compile_process* current_process;
 static struct token* parser_last_token;
 
+extern struct node* parser_current_body;
 extern struct expressionable_op_precedence_group op_precedence[TOTAL_OPERATOR_GROUPS];
 
 struct history
@@ -29,6 +30,16 @@ struct history* history_down(struct history* history,int flags)
 
 int parse_expressionable_single(struct history* history);
 void parse_expressionable(struct history* history);
+
+void parser_scope_new()
+{
+    scope_new(current_process,0);
+}
+
+void parser_scope_finish()
+{
+    scope_finish(current_process);
+}
 
 static void parse_ignore_nl_or_comment(struct token* token)
 {
@@ -60,6 +71,12 @@ static bool token_next_is_operator(const char* op)
 {
     struct token* token = token_peek_next();
     return token_is_operator(token, op);
+}
+
+static bool token_next_is_symbol(char c)
+{
+    struct token* token = token_peek_next();
+    return token_is_symbol(token,c);
 }
 
 // 识别 ;
@@ -616,6 +633,123 @@ void parse_variable(struct datatype* dtype,struct token* name_token,struct histo
     make_variable_node_and_register(history,dtype,name_token,value_node);
 }
 
+void parse_symbol()
+{
+    compiler_error(current_process, "Symbols are not yet supported\n");
+}
+
+void parse_statement(struct history* history)
+{
+    if(token_peek_next()->type == TOKEN_TYPE_KEYWORD)
+    {
+        parse_keyword(history);
+        return;
+    }
+
+    parse_expressionable_root(history);
+    if(token_peek_next()->type == TOKEN_TYPE_SYMBOL && !token_is_symbol(token_peek_next(),';'))
+    {
+        parse_symbol();
+        return;
+    }
+
+    // 所以分句都以；结尾
+    expect_sym(';');
+}
+
+void parser_append_size_for_node(struct history* history, size_t* _variable_size, struct node* node)
+{
+    compiler_warning(current_process, "Parsing size tracking is not yet implemented\n");
+}
+
+void parser_finalize_body(struct history* history, struct node* body_node, struct vector* body_vec, size_t* variable_size, struct node* largest_align_eligible_var_node, struct node* largest_possible_var_node)
+{
+    body_node->body.largest_var_node = largest_align_eligible_var_node;
+    body_node->body.padded = false;
+    body_node->body.size = *variable_size;
+    body_node->body.statements = body_vec;
+}
+
+void parse_body_single_statement(size_t* variable_size, struct vector* body_vec, struct history* history)
+{
+    make_body_node(NULL,0,false,NULL);
+    struct node* body_node = node_pop();
+    body_node->binded.owner = parser_current_body;
+    parser_current_body = body_node;
+    struct node* stmt_node = NULL;
+    parse_statement(history_down(history,history->flags));
+    stmt_node = node_pop();
+    vector_push(body_vec, &stmt_node);
+
+    // Change the variable_size variable by the size of stmt_node.
+    parser_append_size_for_node(history, variable_size, stmt_node);
+    struct node* largest_var_node = NULL;
+    if(stmt_node->type == NODE_TYPE_VARIABLE)
+    {
+        largest_var_node = stmt_node;
+    }
+
+    parser_finalize_body(history, body_node, body_vec, variable_size, largest_var_node, largest_var_node);
+    parser_current_body = body_node->binded.owner;
+
+    node_push(body_node);
+}
+
+void parse_body(size_t* variable_size, struct history* history)
+{
+    parser_scope_new();
+    size_t tmp_size = 0x00;
+    if (!variable_size)
+    {
+        variable_size = &tmp_size;
+    }
+
+    struct vector* body_vec = vector_create(sizeof(struct node*));
+    // 没有括号的判断也是作用域
+    if (!token_next_is_symbol('{'))
+    {
+        parse_body_single_statement(variable_size, body_vec, history);
+        parser_scope_finish();
+        return;
+    }
+
+    parser_scope_finish();
+}
+
+void parse_struct_no_new_scope(struct datatype* dtype)
+{
+
+}
+
+void parse_struct(struct datatype* dtype)
+{
+    bool is_forward_declaration = !token_is_symbol(token_peek_next(),'{');
+    if(!is_forward_declaration)
+    {
+        parser_scope_new();
+    }
+    parse_struct_no_new_scope(dtype);
+
+    if(!is_forward_declaration)
+    {
+        parser_scope_finish();
+    }
+}
+
+void parse_struct_or_union(struct datatype* dtype)
+{
+    switch (dtype->type)
+    {
+        case DATA_TYPE_STRUCT:
+            parse_struct(dtype);
+            break;
+        case DATA_TYPE_UNION:
+        break;
+
+    default:
+        compiler_error(current_process, "COMPILER BUG: The provided datatype is not a structure or union\n");
+    }
+}
 
 
 void parse_variable_function_or_struct_union(struct history* history)
@@ -623,6 +757,10 @@ void parse_variable_function_or_struct_union(struct history* history)
     struct datatype dtype;
     parse_datatype(&dtype);
 
+    if (datatype_is_struct_or_union(&dtype) && token_next_is_symbol('{'))
+    {
+        parse_struct_or_union(&dtype);
+    }
     // 必要时忽略整数缩写，如 "long int "变为 "long"
     parser_ignore_int(&dtype);
 
@@ -742,6 +880,7 @@ int parse_next()
 
 int parse(struct compile_process* process)
 {
+    scope_create_root(process);
     current_process = process;
 
     parser_last_token = NULL;

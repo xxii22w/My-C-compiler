@@ -1,1 +1,8 @@
-int x[4][3];
+struct abc
+{
+    int a;
+    int b;
+};
+
+if(x)
+    y =30;
