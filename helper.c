@@ -12,7 +12,7 @@ size_t variable_size_for_list(struct node* var_list_node)
 {
     assert(var_list_node->type == NODE_TYPE_VARIABLE_LIST);
     size_t size = 0;
-    vector_set_peek_pointer(var_list_node->var_list.list,0);
+    vector_set_peek_pointer(var_list_node->var_list.list, 0);
     struct node* var_node = vector_peek_ptr(var_list_node->var_list.list);
     while(var_node)
     {
@@ -20,6 +20,24 @@ size_t variable_size_for_list(struct node* var_list_node)
         var_node = vector_peek_ptr(var_list_node->var_list.list);
     }
     return size;
+}
+
+struct node* variable_struct_or_union_body_node(struct node* node)
+{
+    if (!node_is_struct_or_union_variable(node))
+    {
+        return NULL;
+    }
+
+    if (node->var.type.type == DATA_TYPE_STRUCT)
+    {
+        return node->var.type.struct_node->_struct.body_n;
+    }
+
+    // return the union body.
+    #warning "Remember to implement unions"
+    printf("NO UNION NODES ARE YET IMPLEMENTED\n");
+    exit(1);
 }
 
 // 字节对齐 计算出需要补的字节
@@ -62,13 +80,13 @@ int compute_sum_padding(struct vector* vec)
 {
     int padding = 0;
     int last_type = -1;
-    bool mixed_type = false;
-    vector_set_peek_pointer(vec,0);
+    bool mixed_types = false;
+    vector_set_peek_pointer(vec, 0);
     struct node* cur_node = vector_peek_ptr(vec);
     struct node* last_node = NULL;
     while(cur_node)
     {
-        if(cur_node->type != NODE_TYPE_VARIABLE)
+        if (cur_node->type != NODE_TYPE_VARIABLE)
         {
             cur_node = vector_peek_ptr(vec);
             continue;
@@ -79,5 +97,6 @@ int compute_sum_padding(struct vector* vec)
         last_node = cur_node;
         cur_node = vector_peek_ptr(vec);
     }
+
     return padding;
 }

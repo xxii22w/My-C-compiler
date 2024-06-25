@@ -104,7 +104,7 @@ struct token
         int type;
     } num;
 
-    // 如果令牌和下一个令牌之间存在空格，则为 True
+    // True if their is whitespace between the token and the next token
     // i.e * a for operator token * would mean whitespace would be set for token "a"
     bool whitespace;
 
@@ -136,7 +136,7 @@ struct lex_process
      * ((50))
      */
     int current_expression_count;
-    struct buffer* parentheses_buffer;  // 括号缓冲区
+    struct buffer* parentheses_buffer;
     struct lex_process_functions* function;
 
     // This will be private data that the lexer does not understand
@@ -154,6 +154,7 @@ struct scope
 {
     int flags;
 
+    // void* 
     struct vector* entities;
 
     // The total number of bytes this scope uses. Aligned to 16 bytes.
@@ -163,10 +164,11 @@ struct scope
     struct scope* parent;
 };
 
+
 enum
 {
     SYMBOL_TYPE_NODE,
-    SYMBOL_TYPE_MATIVE_FUNCTION,
+    SYMBOL_TYPE_NATIVE_FUNCTION,
     SYMBOL_TYPE_UNKNOWN
 };
 
@@ -203,16 +205,17 @@ struct compile_process
         struct scope* current;
     } scope;
 
-    // 符号表
-    struct 
+
+    struct
     {
-        // current active symbol table. struct symbol*
+        // Current active symbol table. struct symbol*
         struct vector* table;
 
-        // struct vector* mulyiple symbol tables stored int here...
+        // struct vector* multiple symbol tables stored in here..
         struct vector* tables;
-    }symbols;
+    } symbols;
 };
+
 
 enum
 {
@@ -249,20 +252,24 @@ enum
     NODE_TYPE_LABEL,
     NODE_TYPE_STRUCT,
     NODE_TYPE_UNION,
-    NODE_TYPE_BRACKER,
+    NODE_TYPE_BRACKET,
     NODE_TYPE_CAST,
     NODE_TYPE_BLANK
 };
 
 enum
 {
-    NODE_FLAG_INSIDE_EXPRESSION = 0b00000001
+    NODE_FLAG_INSIDE_EXPRESSION = 0b00000001,
+    NODE_FLAG_IS_FORWARD_DECLARATION = 0b00000010,
+    NODE_FLAG_HAS_VARIABLE_COMBINED = 0b00000100
 };
+
 
 struct array_brackets
 {
     // Vector of struct node*
     struct vector* n_brackets;
+
 };
 
 struct node;
@@ -288,17 +295,18 @@ struct datatype
 
     struct array
     {
-        struct array_brackets* brackers;
-         /**
+        struct array_brackets* brackets;
+        /**
          * 
          * The total array size: Equation = DATATYPE_SIZE * EACH_INDEX
          */
         size_t size;
-    }array;
-
+    } array;
+    
 };
 
-struct node
+
+struct node 
 {
     int type;
     int flags;
@@ -307,44 +315,45 @@ struct node
 
     struct node_binded
     {
-        // pointer to our body node
-        struct node* owner;
+        // Pointer to our body node
+        struct node* owner; 
 
-        // pointer to the function this node is in.
+        // Pointer to the function this node is in.
         struct node* function;
-    }binded;
-
+    } binded;
+    
     union
     {
-        // 1343+3232
         struct exp
         {
             struct node* left;
             struct node* right;
             const char* op;
-        }exp;
+        } exp;
 
-        struct var 
+        struct var
         {
             struct datatype type;
             int padding;
+            // Aligned offset
+            int aoffset;
             const char* name;
-            struct node* val;
-        }var;
+            struct node* val;   
+        } var;
 
         struct varlist
         {
             // A list of struct node* variables.
             struct vector* list;
-        }var_list;
+        } var_list;
 
         struct bracket
         {
             // int x[50]; [50] would be our bracket node. The inner would NODE_TYPE_NUMBER value of 50
             struct node* inner;
-        }bracket;
+        } bracket;
 
-        struct _struct 
+        struct _struct
         {
             const char* name;
             struct node* body_n;
@@ -359,26 +368,26 @@ struct node
              * 
              */
             struct node* var;
-        }_struct;
+        } _struct;
 
         struct body
         {
-            /*
-                struct node* vector of statements
-            */
-        struct vector* statements;
+            /**
+             * struct node* vector of statements
+             */
+            struct vector* statements;
 
-        // 本体内部组合变量的大小
-        size_t size;
+            // The size of combined variables inside this body.
+            size_t size;
 
-        // 字节对齐
-        bool padded;
+            // True if the variable size had to be increased due to padding in the body.
+            bool padded;
 
-        // 指向语句向量中最大变量节点的指针
-        struct node* largest_var_node;
-        }body;
-    };
-
+            // A pointer to the largest variable node in the statements vector.
+            struct node* largest_var_node;
+        } body;
+    }; 
+    
     union 
     {
         char cval;
@@ -417,8 +426,6 @@ enum
     DATA_TYPE_UNION,
     DATA_TYPE_UNKNOWN
 };
-
-
 
 enum
 {
@@ -465,9 +472,10 @@ int parse(struct compile_process* process);
 struct lex_process* tokens_build_for_string(struct compile_process* compiler, const char* str);
 
 bool token_is_keyword(struct token* token, const char* value);
-bool token_is_symbol(struct token* token,char c);
+bool token_is_identifier(struct token* token);
+bool token_is_symbol(struct token* token, char c);
 
-bool token_is_nl_or_comment_or_newline_seperator(struct token* token);
+bool token_is_nl_or_comment_or_newline_seperator(struct token *token);
 bool keyword_is_datatype(const char *str);
 bool token_is_primitive_keyword(struct token* token);
 
@@ -476,12 +484,19 @@ size_t datatype_size_for_array_access(struct datatype* dtype);
 size_t datatype_element_size(struct datatype* dtype);
 size_t datatype_size_no_ptr(struct datatype* dtype);
 size_t datatype_size(struct datatype* dtype);
+bool datatype_is_primitive(struct datatype* dtype);
+
 bool token_is_operator(struct token* token, const char* val);
 
 struct node* node_create(struct node* _node);
-void make_exp_node(struct node* left_node,struct node* right_node,const char* op);
-void make_bracker_node(struct node* node);
+struct node* node_from_sym(struct symbol* sym);
+struct node* node_from_symbol(struct compile_process* current_process, const char* name);
+struct node* struct_node_for_name(struct compile_process* current_process, const char* name);
+
+void make_exp_node(struct node* left_node, struct node* right_node, const char* op);
+void make_bracket_node(struct node* node);
 void make_body_node(struct vector* body_vec, size_t size, bool padded, struct node* largest_var_node);
+void make_struct_node(const char* name, struct node* body_node);
 
 struct node* node_pop();
 struct node* node_peek();
@@ -491,6 +506,7 @@ void node_set_vector(struct vector* vec, struct vector* root_vec);
 
 bool node_is_expressionable(struct node* node);
 struct node* node_peek_expressionable_or_null();
+bool node_is_struct_or_union_variable(struct node* node);
 
 struct array_brackets* array_brackets_new();
 void array_brackets_free(struct array_brackets* brackets);
@@ -499,23 +515,29 @@ struct vector* array_brackets_node_vector(struct array_brackets* brackets);
 size_t array_brackets_calculate_size_from_index(struct datatype* dtype, struct array_brackets* brackets, int index);
 size_t array_brackets_calculate_size(struct datatype* dtype, struct array_brackets* brackets);
 int array_total_indexes(struct datatype* dtype);
-
 bool datatype_is_struct_or_union(struct datatype* dtype);
+struct node* variable_struct_or_union_body_node(struct node* node);
+struct node* variable_node_or_list(struct node* node);
+
+
 
 /**
- * @brief 从给定的变量节点获取变量大小
+ * @brief Gets the variable size from the given variable node
  * 
  * @param var_node 
  * @return size_t 
  */
 size_t variable_size(struct node* var_node);
 /**
- * @brief 求和变量列表节点内所有变量节点的变量大小返回结果
+ * @brief Sums the variable size of all variable nodes inside the variable list node
+ * Returns the result
  * 
  * @param var_list_node 
  * @return size_t The sum of all variable node sizes in the list.
  */
 size_t variable_size_for_list(struct node* var_list_node);
+struct node* variable_node(struct node* node);
+bool variable_node_is_primitive(struct node* node);
 
 int padding(int val, int to);
 int align_value(int val, int to);
@@ -537,6 +559,12 @@ void scope_push(struct compile_process* process, void* ptr, size_t elem_size);
 void scope_finish(struct compile_process* process);
 struct scope* scope_current(struct compile_process* process);
 
+void symresolver_initialize(struct compile_process* process);
+void symresolver_new_table(struct compile_process* process);
+void symresolver_end_table(struct compile_process* process);
+void symresolver_build_for_node(struct compile_process* process, struct node* node);
+struct symbol* symresolver_get_symbol(struct compile_process* process, const char* name);
+
 #define TOTAL_OPERATOR_GROUPS 14
 #define MAX_OPERATORS_IN_GROUP 12
 
@@ -551,7 +579,6 @@ struct expressionable_op_precedence_group
     char* operators[MAX_OPERATORS_IN_GROUP];
     int associtivity;
 };
-
 
 
 #endif

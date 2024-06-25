@@ -1,9 +1,8 @@
 #include "compiler.h"
 #include "helpers/vector.h"
-
-static void symresolver_push_symbol(struct compile_process* process,struct symbol* sym)
+static void symresolver_push_symbol(struct compile_process* process, struct symbol* sym)
 {
-    vector_push(process->symbols.table,&sym);
+    vector_push(process->symbols.table, &sym);
 }
 
 void symresolver_initialize(struct compile_process* process)
@@ -11,10 +10,11 @@ void symresolver_initialize(struct compile_process* process)
     process->symbols.tables = vector_create(sizeof(struct vector*));
 }
 
+
 void symresolver_new_table(struct compile_process* process)
 {
     // Save the current table
-    vector_push(process->symbols.tables,&process->symbols.table);
+    vector_push(process->symbols.tables, &process->symbols.table);
 
     // Overwrite the active table
     process->symbols.table = vector_create(sizeof(struct symbol*));
@@ -27,56 +27,59 @@ void symresolver_end_table(struct compile_process* process)
     vector_pop(process->symbols.tables);
 }
 
-struct symbol* symresolver_get_symbol(struct compile_process* process,const char* name)
+struct symbol* symresolver_get_symbol(struct compile_process* process, const char* name)
 {
-    // 根据名字寻找符号
-    vector_set_peek_pointer(process->symbols.table,0);
+    vector_set_peek_pointer(process->symbols.table, 0);
     struct symbol* symbol = vector_peek_ptr(process->symbols.table);
     while(symbol)
     {
-        if(S_EQ(symbol->name,name))
+        if (S_EQ(symbol->name, name))
         {
             break;
         }
+
         symbol = vector_peek_ptr(process->symbols.table);
     }
+
     return symbol;
 }
 
+
 struct symbol* symresolver_get_symbol_for_native_function(struct compile_process* process, const char* name)
 {
-    // 根据获取的符号寻找本地函数
-    struct symbol* sym = symresolver_get_symbol(process,name);
-    if(!sym)
+    struct symbol* sym = symresolver_get_symbol(process, name);
+    if (!sym)
     {
         return NULL;
     }
-    if(sym->type != SYMBOL_TYPE_MATIVE_FUNCTION)
+
+    if (sym->type != SYMBOL_TYPE_NATIVE_FUNCTION)
     {
         return NULL;
     }
+
     return sym;
 }
 
+// 符号注册表
 struct symbol* symresolver_register_symbol(struct compile_process* process, const char* sym_name, int type, void* data)
 {
-    // 注册符号
-    if(symresolver_get_symbol(process,sym_name))
+    if (symresolver_get_symbol(process, sym_name))
     {
         return NULL;
     }
 
-    struct symbol* sym = calloc(1,sizeof(struct symbol));
+    struct symbol* sym = calloc(1, sizeof(struct symbol));
     sym->name = sym_name;
     sym->type = type;
     sym->data = data;
-    symresolver_push_symbol(process,sym);
+    symresolver_push_symbol(process, sym);
     return sym;
 }
 
 struct node* symresolver_node(struct symbol* sym)
 {
-    if(sym != SYMBOL_TYPE_NODE)
+    if (sym->type != SYMBOL_TYPE_NODE)
     {
         return NULL;
     }
@@ -96,7 +99,13 @@ void symresolver_build_for_function_node(struct compile_process* process, struct
 
 void symresolver_build_for_structure_node(struct compile_process* process, struct node* node)
 {
-    compiler_error(process, "Structures are not yet supported\n");
+    if (node->flags & NODE_FLAG_IS_FORWARD_DECLARATION)
+    {
+        // We do not register forward declarations.
+        return;
+    }
+
+    symresolver_register_symbol(process, node->_struct.name, SYMBOL_TYPE_NODE, node);
 }
 
 void symresolver_build_for_union_node(struct compile_process* process, struct node* node)
@@ -106,12 +115,12 @@ void symresolver_build_for_union_node(struct compile_process* process, struct no
 
 void symresolver_build_for_node(struct compile_process* process, struct node* node)
 {
-    switch (node->type)
+    switch(node->type)
     {
         case NODE_TYPE_VARIABLE:
-            symresolver_build_for_variable_node(process,node);
-            break;
-        
+        symresolver_build_for_variable_node(process, node);
+        break;
+
         case NODE_TYPE_FUNCTION:
         symresolver_build_for_function_node(process, node);
         break;
@@ -125,5 +134,6 @@ void symresolver_build_for_node(struct compile_process* process, struct node* no
         break;
 
         // Ignore all other node types, because they cant become symbols.
+
     }
 }

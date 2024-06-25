@@ -6,10 +6,10 @@
 
 struct scope* scope_alloc()
 {
-    struct scope* scope = calloc(1,sizeof(struct scope));
+    struct scope* scope = calloc(1, sizeof(struct scope));
     scope->entities = vector_create(sizeof(void*));
     vector_set_peek_pointer_end(scope->entities);
-    vector_set_flag(scope->entities,VECTOR_FLAG_PEEK_DECREMENT);
+    vector_set_flag(scope->entities, VECTOR_FLAG_PEEK_DECREMENT);
     return scope;
 }
 

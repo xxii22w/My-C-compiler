@@ -8,6 +8,46 @@ static struct token* parser_last_token;
 extern struct node* parser_current_body;
 extern struct expressionable_op_precedence_group op_precedence[TOTAL_OPERATOR_GROUPS];
 
+enum
+{
+    PARSER_SCOPE_ENTITY_ON_STACK = 0b00000001,
+    PARSER_SCOPE_ENTITY_STRUCTURE_SCOPE = 0b00000010,
+};
+
+struct parser_scope_entity
+{
+    // The entity flags of the scope entity
+    int flags;
+
+    // The stack offset of the scope entity
+    int stack_offset;
+
+    // Variable declearation
+    struct node* node;
+};
+
+struct parser_scope_entity* parser_new_scope_entity(struct node* node,int stack_offset,int flags)
+{
+    struct parser_scope_entity* entity = calloc(1,sizeof(struct parser_scope_entity));
+    entity->node = node;
+    entity->flags = flags;
+    entity->stack_offset = stack_offset;
+    return entity;
+}
+
+struct parser_scope_entity* parser_scope_last_entity_stop_global_scope()
+{
+    return scope_last_entity_stop_at(current_process,current_process->scope.root);
+}
+
+enum
+{
+    HISTORY_FLAG_INSIDE_UNION = 0b00000001,
+    HISTORY_FLAG_INSIDE_STRUCT = 0b00000010,
+    HISTORY_FLAG_IS_GLOBAL_SCOPE = 0b00000100,
+    HISTORY_FLAG_INSIDE_STRUCTURE = 0b00001000
+};
+
 struct history
 {
     int flags;
@@ -41,6 +81,16 @@ void parser_scope_finish()
     scope_finish(current_process);
 }
 
+struct parser_scope_entity* parser_scope_last_entity()
+{
+    return scope_last_entity(current_process);
+}
+
+void parser_scope_push(struct parser_scope_entity* entity,size_t size)
+{
+    scope_push(current_process,entity,size);
+}
+
 static void parse_ignore_nl_or_comment(struct token* token)
 {
     while(token && token_is_nl_or_comment_or_newline_seperator(token))
@@ -55,7 +105,10 @@ static struct token* token_next()
 {
     struct token* next_token = vector_peek_no_increment(current_process->token_vec);
     parse_ignore_nl_or_comment(next_token);
-    current_process->pos = next_token->pos;
+    if(next_token)
+    {
+        current_process->pos = next_token->pos;
+    }
     parser_last_token = next_token;
     return vector_peek(current_process->token_vec);
 }
@@ -452,6 +505,20 @@ void parser_datatype_init_type_and_size_for_primitive(struct token* datatype_tok
     parser_datatype_adjust_size_for_secondary(datatype_out, datatype_secondary_token);
 }
 
+size_t size_of_struct(const char* struct_name)
+{
+    struct symbol* sym = symresolver_get_symbol(current_process,struct_name);
+    if(!sym)
+    {
+        return 0;
+    }
+
+    assert(sym->type == SYMBOL_TYPE_NODE);
+    struct node* node = sym->data;
+    assert(node->type == NODE_TYPE_STRUCT);
+    return node->_struct.body_n->body.size;
+}
+
 void parser_datatype_init_type_and_size(struct token* datatype_token, struct token* datatype_secondary_token, struct datatype* datatype_out, int pointer_depth, int expected_type)
 {
     if (!parser_datatype_is_secondary_allowed(expected_type) && datatype_secondary_token)
@@ -465,8 +532,12 @@ void parser_datatype_init_type_and_size(struct token* datatype_token, struct tok
             parser_datatype_init_type_and_size_for_primitive(datatype_token, datatype_secondary_token, datatype_out);
         break;
         case DATA_TYPE_EXPECT_STRUCT:
+            datatype_out->type = DATA_TYPE_STRUCT;
+            datatype_out->size = size_of_struct(datatype_token->sval);
+            datatype_out->struct_node = struct_node_for_name(current_process,datatype_token->sval);
+            break;
         case DATA_TYPE_EXPECT_UNION:
-            compiler_error(current_process, "Structure and union types are currently unsupported\n");
+            compiler_error(current_process, "Union types are currently unsupported\n");
         break;        
 
         default:
@@ -569,6 +640,64 @@ void make_variable_node(struct datatype* dtype,struct token* name_token,struct n
     node_create(&(struct node){.type=NODE_TYPE_VARIABLE, .var.name=name_str, .var.type=*dtype, .var.val=value_node});
 }
 
+void parser_scope_offset_for_stack(struct node* node,struct history* history)
+{
+    struct parser_scope_entity* last_entity = parser_scope_last_entity_stop_global_scope();
+    bool upward_stack = history->flags & HISTORY_FLAG_INSIDE_STRUCT;
+    int offset = -variable_size(node);
+    if(upward_stack)
+    {
+        #warning "HANDLE UPWARD STACK"
+        compiler_error(current_process, "Not yet implemented\n");
+    }
+
+    if(last_entity)
+    {
+        offset += variable_node(last_entity->node)->var.aoffset;
+        if(variable_node_is_primitive(node))
+        {
+            variable_node(node)->var.padding = padding(upward_stack ? offset : -offset,node->var.type.size);
+        }
+    }
+
+}
+
+void parser_scope_offset_for_global(struct node* node,struct history* history)
+{
+    return 0;
+}
+
+void parser_scope_offset_for_structure(struct node* node,struct history* history)
+{
+    int offset = 0;
+    struct parser_scope_entity* last_entity = parser_scope_last_entity();
+    if(last_entity)
+    {
+        offset += last_entity->stack_offset + last_entity->node->var.type.size;
+        if(variable_node_is_primitive(node))
+        {
+            node->var.padding = padding(offset,node->var.type.size);
+        }
+        node->var.aoffset = offset + node->var.padding;
+    }
+}
+
+void parser_scope_offset(struct node* node,struct history* history)
+{
+    if(history->flags & HISTORY_FLAG_IS_GLOBAL_SCOPE)
+    {
+        parser_scope_offset_for_global(node,history);
+        return;
+    }
+    if(history->flags & HISTORY_FLAG_INSIDE_STRUCTURE)
+    {
+        parser_scope_offset_for_structure(node,history);
+        return;
+    }
+
+    parser_scope_offset_for_stack(node,history);
+}
+
 void make_variable_node_and_register(struct history* history,struct datatype* dtype,struct token* name_token,struct node* value_node)
 {
     make_variable_node(dtype,name_token,value_node);
@@ -576,7 +705,9 @@ void make_variable_node_and_register(struct history* history,struct datatype* dt
 
     #warning "Remember to calculate scope offsets and push to the scope"
     // Calculate the scope offset
+    parser_scope_offset(var_node, history);
     // Push the variable node to the scope
+    parser_scope_push(parser_new_scope_entity(var_node, var_node->var.aoffset, 0), var_node->var.type.size);
 
     node_push(var_node);
 }
@@ -616,7 +747,7 @@ void parse_variable(struct datatype* dtype,struct token* name_token,struct histo
     if(token_next_is_operator("["))
     {
         brackets =  parse_array_brackets(history);
-        dtype->array.brackers = brackets;
+        dtype->array.brackets = brackets;
         dtype->array.size = array_brackets_calculate_size(dtype,brackets);
         dtype->flags |= DATATYPE_FLAG_IS_ARRAY;
     }
@@ -635,7 +766,15 @@ void parse_variable(struct datatype* dtype,struct token* name_token,struct histo
 
 void parse_symbol()
 {
-    compiler_error(current_process, "Symbols are not yet supported\n");
+    if(token_next_is_symbol('{'))
+    {
+        size_t variable_size = 0;
+        struct history* history = history_begin(HISTORY_FLAG_IS_GLOBAL_SCOPE);
+        parse_body(&variable_size,history);
+        struct node* body_node = node_pop();
+
+        node_push(body_node);
+    }
 }
 
 void parse_statement(struct history* history)
@@ -659,14 +798,49 @@ void parse_statement(struct history* history)
 
 void parser_append_size_for_node(struct history* history, size_t* _variable_size, struct node* node)
 {
-    compiler_warning(current_process, "Parsing size tracking is not yet implemented\n");
+     if (!node)
+    {
+        return;
+    }
+
+    if (node->type == NODE_TYPE_VARIABLE)
+    {
+       if(node_is_struct_or_union_variable(node))
+       {
+           parser_append_size_for_node_struct_union(history, _variable_size, node);
+           return;
+       }
+
+       *_variable_size += variable_size(node);
+    }
+    else if(node->type == NODE_TYPE_VARIABLE_LIST)
+    {
+        parser_append_size_for_variable_list(history, _variable_size, node->var_list.list);
+    }
 }
 
-void parser_finalize_body(struct history* history, struct node* body_node, struct vector* body_vec, size_t* variable_size, struct node* largest_align_eligible_var_node, struct node* largest_possible_var_node)
+void parser_finalize_body(struct history* history, struct node* body_node, struct vector* body_vec, size_t* _variable_size, struct node* largest_align_eligible_var_node, struct node* largest_possible_var_node)
 {
+    if(history->flags & HISTORY_FLAG_INSIDE_UNION)
+    {
+        if(largest_possible_var_node)
+        {
+            *_variable_size = variable_size(largest_possible_var_node);
+        }
+    }
+
+    int padding = compute_sum_padding(body_vec);
+    *_variable_size += padding;
+
+    if(largest_align_eligible_var_node)
+    {
+        *_variable_size = align_value(*variable_size,largest_align_eligible_var_node->var.type.size);
+    }
+
+    bool padded = padding != 0;
     body_node->body.largest_var_node = largest_align_eligible_var_node;
-    body_node->body.padded = false;
-    body_node->body.size = *variable_size;
+    body_node->body.padded = padded;
+    body_node->body.size = *_variable_size;
     body_node->body.statements = body_vec;
 }
 
@@ -695,6 +869,60 @@ void parse_body_single_statement(size_t* variable_size, struct vector* body_vec,
     node_push(body_node);
 }
 
+void parse_body_multiple_statements(size_t *variable_size, struct vector *body_vec, struct history *history)
+{
+    // Create a blank body node
+    make_body_node(NULL,0,false,NULL);
+    struct node* body_node = node_pop();
+    body_node->binded.owner = parser_current_body;
+    parser_current_body = body_node;
+
+    struct node* stmt_node = NULL;
+    struct node* largest_possible_var_node = NULL;
+    struct node* largest_align_eligible_var_node = NULL;
+
+    // We have a body i.e { } therefore we must pop off the left curly brace..
+    expect_sym('{');
+
+    while(!token_next_is_symbol('}'))
+    {
+        parse_statement(history_down(history,history->flags));
+        stmt_node = node_pop();
+        if(stmt_node->type == NODE_TYPE_VARIABLE)
+        {
+            if(!largest_possible_var_node || 
+                (largest_possible_var_node->var.type.size <= stmt_node->var.type.size))
+            {
+                largest_possible_var_node = stmt_node;
+            }
+
+            if(variable_node_is_primitive(stmt_node))
+            {
+                if(!largest_align_eligible_var_node ||
+                    (largest_align_eligible_var_node->var.type.size <= stmt_node->var.type.size))
+                {
+                    largest_align_eligible_var_node = stmt_node;
+                }
+            }
+        }
+        // Push the statement node to the body vector
+        vector_push(body_vec,&stmt_node);
+
+        // 如果该语句是一个变量，我们可能需要更改变量大小。
+        parser_append_size_for_node(history,variable_size,variable_node_or_list(stmt_node));
+    }
+
+    // Pop off the right curly brace
+    expect_sym('}');
+
+    parser_finalize_body(history,body_node,body_vec,variable_size,largest_align_eligible_var_node,largest_possible_var_node);
+    parser_current_body = body_node->binded.owner;
+
+    // Let's now push the body node back to the stack :) 
+    node_push(body_node); 
+
+}
+
 void parse_body(size_t* variable_size, struct history* history)
 {
     parser_scope_new();
@@ -713,12 +941,52 @@ void parse_body(size_t* variable_size, struct history* history)
         return;
     }
 
+    // We have some statements between curly braces { int a; int b; int c; }
+    parse_body_multiple_statements(variable_size,body_vec,history);
     parser_scope_finish();
+
+    #warning "Don't forget to adjust the function stack size"
 }
 
-void parse_struct_no_new_scope(struct datatype* dtype)
+void parse_struct_no_new_scope(struct datatype* dtype,bool is_forward_declaration)
 {
+    struct node* body_node = NULL;
+    size_t body_variable_size = 0;
 
+    // 如果有前置声明
+    if(!is_forward_declaration)
+    {
+        parse_body(&body_variable_size,history_begin(HISTORY_FLAG_INSIDE_STRUCTURE));
+        body_node = node_pop();
+    }
+
+    make_struct_node(dtype->type_str,body_node);
+    struct node* struct_node = node_pop();
+    if(body_node)
+    {
+        dtype->size = body_node->body.size;
+    }
+    dtype->struct_node = struct_node;
+
+    if(token_is_identifier(token_peek_next()))
+    {
+        struct token* var_name = token_next();
+        struct_node->flags |= NODE_FLAG_HAS_VARIABLE_COMBINED;
+        if(dtype->flags & DATATYPE_FLAG_STRUCT_UNION_NO_NAME)
+        {
+            dtype->type_str = var_name->sval;
+            dtype->flags &= ~DATATYPE_FLAG_STRUCT_UNION_NO_NAME;    // 这行代码就是在清除这个标志，表示结构体或联合体现在有名字了。
+            struct_node->_struct.name = var_name->sval;
+        }
+        make_variable_node_and_register(history_begin(0),dtype,var_name,NULL);
+        struct_node->_struct.var = node_pop();
+    }
+
+    // 所有结构都以分号结束
+    expect_sym(';');
+
+    // 完成创建
+    node_push(struct_node);
 }
 
 void parse_struct(struct datatype* dtype)
@@ -728,7 +996,7 @@ void parse_struct(struct datatype* dtype)
     {
         parser_scope_new();
     }
-    parse_struct_no_new_scope(dtype);
+    parse_struct_no_new_scope(dtype,is_forward_declaration);
 
     if(!is_forward_declaration)
     {
@@ -760,6 +1028,11 @@ void parse_variable_function_or_struct_union(struct history* history)
     if (datatype_is_struct_or_union(&dtype) && token_next_is_symbol('{'))
     {
         parse_struct_or_union(&dtype);
+
+        struct node* su_node = node_pop();
+        symresolver_build_for_node(current_process,su_node);
+        node_push(su_node);
+        return;
     }
     // 必要时忽略整数缩写，如 "long int "变为 "long"
     parser_ignore_int(&dtype);
@@ -793,6 +1066,34 @@ void parse_variable_function_or_struct_union(struct history* history)
         make_variable_list_node(var_list);
     }
     expect_sym(";");
+}
+
+void parser_append_size_for_node_struct_union(struct history* history, size_t* _variable_size, struct node* node)
+{
+    *_variable_size += variable_size(node);
+    if(node->var.type.flags & DATATYPE_FLAG_IS_POINTER)
+    {
+        return;
+    }
+    // 按最大的字节类型对齐
+    struct node* largest_var_node = variable_struct_or_union_body_node(node)->body.largest_var_node;
+    if(largest_var_node)
+    {
+        *_variable_size += align_value(*_variable_size,largest_var_node->var.type.size);
+    }
+}
+
+void parser_append_size_for_node(struct history* history,size_t* _variable_size,struct node* node);
+
+void parser_append_size_for_variable_list(struct history* history,size_t* variable_size,struct vector* vec)
+{
+    vector_set_peek_pointer(vec,0);
+    struct node* node = vector_peek_ptr(vec);
+    while(node)
+    {
+        parser_append_size_for_node(history,variable_size,node);
+        node = vector_peek_ptr(vec);
+    }
 }
 
 void parse_keyword(struct history* history)
@@ -834,6 +1135,7 @@ int parse_expressionable_single(struct history* history)
         parse_keyword(history);
         res = 0;
         break;
+
     }
     return res;
 }
@@ -872,6 +1174,9 @@ int parse_next()
             break;
         case TOKEN_TYPE_KEYWORD:
             parse_keyword_for_global();
+            break;
+        case TOKEN_TYPE_SYMBOL:
+            parse_symbol();
             break;
     }
 

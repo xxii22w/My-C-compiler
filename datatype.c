@@ -12,11 +12,13 @@ bool datatype_is_struct_or_union_for_name(const char* name)
 
 size_t datatype_size_for_array_access(struct datatype* dtype)
 {
-    if(datatype_is_struct_or_union(dtype) && dtype->flags & DATATYPE_FLAG_IS_POINTER && dtype->pointer_depth == 1)
+    if (datatype_is_struct_or_union(dtype) && dtype->flags & DATATYPE_FLAG_IS_POINTER && 
+        dtype->pointer_depth == 1)
     {
         // struct abc* abc; abc[0];
         return dtype->size;
     }
+
     return datatype_size(dtype);
 }
 
@@ -53,4 +55,9 @@ size_t datatype_size(struct datatype* dtype)
     }
 
     return dtype->size;
+}
+
+bool datatype_is_primitive(struct datatype* dtype)
+{
+    return !datatype_is_struct_or_union(dtype);
 }

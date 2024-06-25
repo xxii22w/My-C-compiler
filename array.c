@@ -16,7 +16,7 @@ void array_brackets_free(struct array_brackets* brackets)
 
 void array_brackets_add(struct array_brackets* brackets,struct node* bracket_node)
 {
-    assert(bracket_node->type == NODE_TYPE_BRACKER);
+    assert(bracket_node->type == NODE_TYPE_BRACKET);
     vector_push(brackets->n_brackets,&bracket_node);
 }
 
@@ -61,6 +61,6 @@ size_t array_brackets_calculate_size(struct datatype* dtype, struct array_bracke
 int array_total_indexes(struct datatype* dtype)
 {
      assert(dtype->flags & DATATYPE_FLAG_IS_ARRAY);
-    struct array_brackets* brackets = dtype->array.brackers;
+    struct array_brackets* brackets = dtype->array.brackets;
     return vector_count(brackets->n_brackets);
 }

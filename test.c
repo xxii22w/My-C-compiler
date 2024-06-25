@@ -1,8 +1,5 @@
-struct abc
+struct dog
 {
-    int a;
-    int b;
+    int x;
+    int y;
 };
-
-if(x)
-    y =30;
