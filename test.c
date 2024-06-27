@@ -1,9 +1,9 @@
 int main(int x)
 {
     int i = 0;
-    for(i = 0;i < 30;i += 1)
+    do
     {
-
-    }
+        int b = 0;
+    }while(1);
 
 }
