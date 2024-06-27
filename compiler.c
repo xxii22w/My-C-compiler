@@ -30,8 +30,10 @@ void compiler_warning(struct compile_process* compiler, const char* msg, ...)
 int compile_file(const char* filename, const char* out_filename, int flags)
 {
     struct compile_process* process = compile_process_create(filename, out_filename, flags);
-    if (!process)
+    if (!process){
+        printf("compile_process_create error\n");
         return COMPILER_FAILED_WITH_ERRORS;
+    }
 
     // Preform lexical analysis
     struct lex_process* lex_process = lex_process_create(process, &compiler_lex_functions, NULL);
