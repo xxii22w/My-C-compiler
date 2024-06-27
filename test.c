@@ -4,5 +4,13 @@ int main(int x)
     {
         goto abc;
     }
+
+    switch (x)
+    {
+
+        case 1:
+
+       break;
+    }
 abc:
 }
