@@ -179,6 +179,26 @@ struct symbol
     void* data;
 };
 
+struct codegen_entry_point
+{
+    // 入口点 ID
+    int id;
+};
+
+struct codegen_exit_point
+{
+    // 出口 ID
+    int id;
+};
+
+struct code_generator 
+{
+    // vector of struct entry_point*
+    struct vector* entry_points;
+    // vector of struct exit_point*
+    struct vector* exit_points;
+};
+
 struct compile_process
 {
     // The flags in regards to how this file should be compiled
@@ -214,6 +234,9 @@ struct compile_process
         // struct vector* multiple symbol tables stored in here..
         struct vector* tables;
     } symbols;
+
+    // 代码生成器的指针
+    struct code_generator* generator;
 };
 
 
@@ -603,6 +626,7 @@ struct vector* lex_process_tokens(struct lex_process* process);
 int lex(struct lex_process* process);
 int parse(struct compile_process* process);
 int codegen(struct compile_process* process);
+struct code_generator* codegenerator_new(struct compile_process* process);
 
 /**
  * @brief Builds tokens for the input string.
