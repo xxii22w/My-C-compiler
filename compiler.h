@@ -358,7 +358,7 @@ struct node
             struct node* true_node;
             struct node* false_node;
         } tenary;
-        
+
 
         struct varlist
         {
@@ -501,6 +501,12 @@ struct node
             struct node* name;
         }label;
 
+        struct cast 
+        {
+            struct datatype dtype;
+            struct node* operand;
+        }cast;
+
     }; 
     
     union 
@@ -624,6 +630,7 @@ void make_label_node(struct node* name_node);
 void make_continue_node();
 void make_break_node();
 
+void make_cast_node(struct datatype* dtype,struct node* operand_node);
 void make_exp_node(struct node* left_node, struct node* right_node, const char* op);
 void make_exp_parentheses_node(struct node* exp_node);
 
