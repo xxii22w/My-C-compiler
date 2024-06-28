@@ -35,9 +35,12 @@ struct node* variable_struct_or_union_body_node(struct node* node)
     }
 
     // return the union body.
-    #warning "Remember to implement unions"
-    printf("NO UNION NODES ARE YET IMPLEMENTED\n");
-    exit(1);
+    if(node->var.type.type == DATA_TYPE_UNION)
+    {
+        return node->var.type.union_node->_union.body_n;
+    }
+    
+    return NULL;
 }
 
 // 字节对齐 计算出需要补的字节

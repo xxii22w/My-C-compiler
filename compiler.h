@@ -389,6 +389,14 @@ struct node
             struct node* var;
         } _struct;
 
+        struct _union
+        {
+            const char* name;
+            struct node* body_n;
+
+            struct node* var;
+        }_union;
+
         struct body
         {
             /**
@@ -622,6 +630,7 @@ bool node_is_expression_or_parentheses(struct node* node);
 bool node_is_value_type(struct node* node);
 
 struct node* struct_node_for_name(struct compile_process* current_process, const char* name);
+struct node* union_node_for_name(struct compile_process* current_process,const char* name);
 
 void make_tenary_node(struct node* true_node, struct node* false_node);
 void make_case_node(struct node* exp_node);
