@@ -34,20 +34,20 @@ void stackframe_pop_expecting(struct node* func_node,int expecting_type,const ch
 
 void stackframe_peek_start(struct node* func_node)
 {
-    struct stack_frame* frame = &func_node.frame;
-    vector_set_peek_pointer(frame->elements,0);
-    vector_set_flag(frame->elements,VECTOR_FLAG_PEEK_DECREMENT);
+    struct stack_frame* frame = &func_node->func.frame;
+    vector_set_peek_pointer(frame->elements, 0);
+    vector_set_flag(frame->elements, VECTOR_FLAG_PEEK_DECREMENT);
 }
 
 struct stack_frame_element* stackframe_peek(struct node* func_node)
 {
-    struct stack_frame* frame = &func_node->frame;
+    struct stack_frame* frame = &func_node->func.frame;
     return vector_peek(frame->elements);
 }
 
 void stackframe_push(struct node* func_node,struct stack_frame_element* element)
 {
-    struct stack_frame* frame = func_node->func.frame;
+    struct stack_frame* frame = &func_node->func.frame;
     // 堆栈向下增长 
     element->offset_from_bp = -(vector_count(frame->elements) * STACK_PUSH_SIZE);
     vector_push(frame->elements,element);

@@ -1,6 +1,6 @@
 OBJECTS= ./build/compiler.o ./build/cprocess.o ./build/lexer.o ./build/token.o ./build/lex_process.o ./build/parser.o ./build/codegen.o \
 ./build/scope.o ./build/symresolver.o ./build/fixup.o ./build/array.o ./build/datatype.o ./build/node.o ./build/expressionable.o \
-./build/helper.o ./build/helpers/buffer.o ./build/helpers/vector.o ./build/stackframe.o
+./build/helper.o ./build/helpers/buffer.o ./build/helpers/vector.o ./build/stackframe.o ./build/resolver.o
 INCLUDES= -I./
 
 all: ${OBJECTS}
@@ -17,6 +17,9 @@ all: ${OBJECTS}
 
 ./build/token.o: ./token.c
 	gcc token.c ${INCLUDES} -o ./build/token.o -g -c
+
+./build/resolver.o: ./resolver.c
+	gcc resolver.c ${INCLUDES} -o ./build/resolver.o -g -c
 
 ./build/lex_process.o: ./lex_process.c
 	gcc lex_process.c ${INCLUDES} -o ./build/lex_process.o -g -c

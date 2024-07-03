@@ -626,6 +626,222 @@ struct node
 
 enum
 {
+    RESOLVER_ENTITY_FLAG_IS_STACK = 0b00000001,
+    RESOLVER_ENTITY_FLAG_NO_MERGE_WITH_NEXT_ENTITY = 0b00000010,
+    RESOLVER_ENTITY_FLAG_NO_MERGE_WITH_LEFT_ENTITY = 0b00000100,
+    RESOLVER_ENTITY_FLAG_DO_INDIRECTION = 0b00001000,
+    RESOLVER_ENTITY_FLAG_JUST_USE_OFFSET = 0b00010000,
+    RESOLVER_ENTITY_FLAG_IS_POINTER_ARRAY_ENTITY = 0b00100000,
+    RESOLVER_ENTITY_FLAG_WAS_CASTED = 0b01000000,
+    RESOLVER_ENTITY_FLAG_USES_ARRAY_BRACKETS = 0b10000000
+};
+
+enum
+{
+    RESOLVER_ENTITY_TYPE_VARIABLE,
+    RESOLVER_ENTITY_TYPE_FUNCTION,
+    RESOLVER_ENTITY_TYPE_STRUCTURE,
+    RESOLVER_ENTITY_TYPE_FUNCTION_CALL,
+    RESOLVER_ENTITY_TYPE_ARRAY_BRACKET,
+    RESOLVER_ENTITY_TYPE_RULE,
+    RESOLVER_ENTITY_TYPE_GENERAL,
+    RESOLVER_ENTITY_TYPE_UNARY_GET_ADDRESS,
+    RESOLVER_ENTITY_TYPE_UNARY_INDIRECTION,
+    RESOLVER_ENTITY_TYPE_UNSUPPORTED,
+    RESOLVER_ENTITY_TYPE_CAST
+};
+
+enum
+{
+    RESOLVER_SCOPE_FLAG_IS_STACK = 0b00000001
+};
+
+struct resolver_result;
+struct resolver_process;
+struct resolver_scope;
+struct resolver_entity;
+
+typedef void*(*RESOLVER_NEW_ARRAY_BRACKET_ENTITY)(struct resolver_result* result, struct node* array_entity_node);
+typedef void(*RESOLVER_DELETE_SCOPE)(struct resolver_scope* scope);
+typedef void(*RESOLVER_DELETE_ENTITY)(struct resolver_entity* entity);
+typedef struct resolver_entity*(*RESOLVER_MERGE_ENTITIES)(struct resolver_process* process, struct resolver_result* result, struct resolver_entity* left_entity, struct resolver_entity* right_entity);
+typedef void*(*RESOLVER_MAKE_PRIVATE)(struct resolver_entity* entity, struct node* node, int offset, struct resolver_scope* scope);
+typedef void(*RESOLVER_SET_RESULT_BASE)(struct resolver_result* result, struct resolver_entity* base_entity);
+
+struct resolver_callbacks
+{
+    RESOLVER_NEW_ARRAY_BRACKET_ENTITY new_array_entity;
+    RESOLVER_DELETE_SCOPE delete_scope;
+    RESOLVER_DELETE_ENTITY delete_entity;
+    RESOLVER_MERGE_ENTITIES merge_entities;
+    RESOLVER_MAKE_PRIVATE make_private;
+    RESOLVER_SET_RESULT_BASE set_result_base;
+};
+
+struct compile_process;
+struct resolver_process
+{
+    struct resolver_scopes
+    {
+        struct resolver_scope* root;
+        struct resolver_scope* current;
+    }scope;
+
+    struct compile_process* compiler;
+    struct resolver_scope* scallbacks;
+};
+
+struct resolver_array_data
+{
+    // 保存解析器实体类型的节点
+    struct vector* array_entities;
+};
+
+enum
+{
+    RESOLVER_RESULT_FLAG_FAILED = 0b00000001,
+    RESOLVER_RESULT_FLAG_RUNTIME_NEEDED_TO_FINISH_PATH = 0b00000010,
+    RESOLVER_RESULT_FLAG_PROCESSING_ARRAY_ENTITIES = 0b00000100,
+    RESOLVER_RESULT_FLAG_HAS_POINTER_ARRAY_ACCESS = 0b00001000,
+    RESOLVER_RESULT_FLAG_FIRST_ENTITY_LOAD_TO_EBX = 0b00010000,
+    RESOLVER_RESULT_FLAG_FIRST_ENTITY_PUSH_VALUE = 0b00100000,
+    RESOLVER_RESULT_FLAG_FINAL_INDIRECTION_REQUIRED_FOR_VALUE = 0b01000000,
+    RESOLVER_RESULT_FLAG_DOES_GET_ADDRESS = 0b10000000
+};
+
+struct resolver_result
+{
+    // 这是我们解析器结果中的第一个实体
+    struct resolver_entity* first_entity_const;
+    // 该实体代表该表达式开头的变量
+    struct resolver_entity* identifier;
+    // 等于最后发现的结构或联合实体
+    struct resolver_entity* last_struct_union_entity;
+
+    struct resolver_array_data  array_data;
+
+    // 结果的根实体
+    struct resolver_entity* entity;
+    // 我们结果的最后一个实体
+    struct resolver_entity* last_entity;
+    int flags;
+    // 实体数量
+    size_t count;
+
+    struct resolver_result_base 
+    {
+        // [ebp-4], [name+4]
+        char address[60];
+        // EBP, global_variable_name
+        char base_address[60];
+        // -4
+        int offset;
+    }base;
+};
+
+struct resolver_scope 
+{
+    // 解析作用域标志
+    int flags;
+    struct vector* entities;
+    struct resolver_scope* next;
+    struct resolver_scope* prev;
+
+    // 解析器作用域的私有数据
+    void* private;
+};
+
+struct resolver_entity 
+{
+    int type;
+    int flags;
+
+    // 被解析实体的名称
+    // 例如函数名、变量名等
+    const char* name;
+
+    // 堆栈中的偏移量 EBP+(offset)
+    int offset;
+    // 这是实体相关的节点
+    struct node* node;
+
+    union 
+    {
+        struct resolver_entity_var_data
+        {
+            struct datatype dtype;
+            struct resolver_array_runtime_
+            {
+                struct datatype dtype;
+                struct node* index_node;
+                int multiplier;
+            }array_runtime;
+        }var_data;
+
+        struct resolver_array 
+        {
+            struct datatype dtype;
+            struct node* array_index_node;
+            int index;
+        }array;
+
+        struct resolver_entity_function_call_data
+        {
+            // struct node* vector
+            struct vector* arguments;
+            // The total bytes used by the function call.
+            size_t stack_size;
+        }func_call_data;
+
+        struct resolver_entity_rule
+        {
+            struct resolver_entity_rule_left
+            {
+                int flags;
+            } left;
+
+            struct resolver_entity_rule_right
+            {
+                int flags;
+            } right;
+        } rule;
+
+        struct resolver_indirection
+        {
+            // 我们需要多少深度才能找到数值？
+            int depth;
+        } indirection;
+    };
+
+     struct entity_last_resolve
+    {
+
+        struct node* referencing_node;
+    } last_resolve;
+
+    // 解析器实体的数据类型
+    struct datatype dtype;
+
+    // 该实体所属的范围
+    struct resolver_scope* scope;
+
+    // The result of the resolution
+    struct resolver_result* result;
+
+    // 解析器过程
+    struct resolver_process* process;
+
+    // 只有解析器实体创建者知道的私有数据
+    void* private;
+
+    // The next entity
+    struct resolver_entity* next;
+    // The previous entity
+    struct resolver_entity* prev;
+};
+
+enum
+{
     DATATYPE_FLAG_IS_SIGNED = 0b00000001,
     DATATYPE_FLAG_IS_STATIC = 0b00000010,
     DATATYPE_FLAG_IS_CONST = 0b00000100,
@@ -777,7 +993,8 @@ bool datatype_is_struct_or_union(struct datatype* dtype);
 struct node* variable_struct_or_union_body_node(struct node* node);
 struct node* variable_node_or_list(struct node* node);
 
-
+int array_multiplier(struct datatype* dtype,int index,int index_value);
+int array_offset(struct datatype* dtype,int index,int index_value);
 
 /**
  * @brief Gets the variable size from the given variable node
