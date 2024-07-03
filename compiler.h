@@ -191,11 +191,24 @@ struct codegen_exit_point
     int id;
 };
 
+struct string_table_element
+{
+    // This is the string that the element is related too. "Hello world"
+    const char* str;
+
+    // 这是指向内存的汇编标签
+    // 找到字符串的内存
+    const char label[50];
+};
+
 struct code_generator 
 {
-    // vector of struct entry_point*
+    //  A vector of struct string_table_element*
+    struct vector* string_table;
+
+    // vector of struct codegen_entry_point*
     struct vector* entry_points;
-    // vector of struct exit_point*
+    // vector of struct codegen_exit_point*
     struct vector* exit_points;
 };
 
