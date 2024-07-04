@@ -402,6 +402,25 @@ void stackframe_sub(struct node* func_node, int type, const char* name, size_t a
 void stackframe_add(struct node* func_node, int type, const char* name, size_t amount);
 void stackframe_assert_empty(struct node* func_node);
 
+struct node;
+struct unary 
+{
+    // "*" 用于指针访问。**** 即使是多指针访问，也只有第一个运算符在这里
+    const char* op;
+    struct node* operand;
+    union 
+    {
+        struct indirection
+        {
+            // The pointer depth
+            int depth;
+        }indirection;
+    };
+    
+};
+
+
+
 struct node 
 {
     int type;
@@ -500,7 +519,7 @@ struct node
             // True if the variable size had to be increased due to padding in the body.
             bool padded;
 
-            // A pointer to the largest variable node in the statements vector.
+            // 指向语句向量中最大变量节点的指针
             struct node* largest_var_node;
         } body;
 
@@ -611,6 +630,8 @@ struct node
             struct node* operand;
         }cast;
 
+        struct unary unary;
+
     }; 
     
     union 
@@ -685,10 +706,10 @@ struct resolver_process
     {
         struct resolver_scope* root;
         struct resolver_scope* current;
-    }scope;
+    } scope;
 
     struct compile_process* compiler;
-    struct resolver_scope* scallbacks;
+    struct resolver_callbacks callbacks;
 };
 
 struct resolver_array_data
@@ -813,7 +834,7 @@ struct resolver_entity
         } indirection;
     };
 
-     struct entity_last_resolve
+    struct entity_last_resolve
     {
 
         struct node* referencing_node;
@@ -829,7 +850,7 @@ struct resolver_entity
     struct resolver_result* result;
 
     // 解析器过程
-    struct resolver_process* process;
+    struct resolver_process* resolver;
 
     // 只有解析器实体创建者知道的私有数据
     void* private;
@@ -882,6 +903,12 @@ enum
     DATA_SIZE_WORD = 2,
     DATA_SIZE_DWORD = 4,
     DATA_SIZE_DDWORD = 8
+};
+
+enum
+{
+    STRUCT_ACCESS_BACKWARDS = 0b00000001,
+    STRUCT_STOP_AT_POINTER_ACCESS = 0b00000010
 };
 
 enum
@@ -943,8 +970,12 @@ struct node* node_from_symbol(struct compile_process* current_process, const cha
 bool node_is_expression_or_parentheses(struct node* node);
 bool node_is_value_type(struct node* node);
 bool node_is_expression(struct node* node,const char* op);
+bool node_is_struct_or_union(struct node* node);
 bool is_array_node(struct node* node);
 bool is_node_assignment(struct node* node);
+bool is_unary_operator(const char* op);
+bool op_is_indirection(const char* op);
+bool op_is_address(const char* op);
 
 struct node* struct_node_for_name(struct compile_process* current_process, const char* name);
 struct node* union_node_for_name(struct compile_process* current_process,const char* name);
@@ -971,6 +1002,7 @@ void make_do_while_node(struct node* body_node,struct node* exp_node);
 void make_return_node(struct node* exp_node);
 void make_if_node(struct node* cond_node,struct node* body_node,struct node* next_node);
 void make_else_node(struct node* body_node);
+void make_unary_node(const char* op,struct node* operand_node);
 
 struct node* node_pop();
 struct node* node_peek();
@@ -978,7 +1010,21 @@ struct node* node_peek_or_null();
 void node_push(struct node* node);
 void node_set_vector(struct vector* vec, struct vector* root_vec);
 
+bool is_access_operator(const char* op);
+bool is_access_node(struct node* node);
+bool is_array_operator(const char* op);
+bool is_array_node(struct node* node);
+bool is_parentheses_operator(const char* op);
+bool is_parentheses_node(struct node* node);
+bool is_access_node_with_op(struct node* node, const char* op);
+
+bool is_argument_operator(const char* op);
+bool is_argument_node(struct node* node);
+void datatype_decrement_pointer(struct datatype* dtype);
+size_t array_brackets_count(struct datatype* dtype);
+
 bool node_is_expressionable(struct node* node);
+bool node_valid(struct node* node);
 struct node* node_peek_expressionable_or_null();
 bool node_is_struct_or_union_variable(struct node* node);
 
@@ -995,6 +1041,9 @@ struct node* variable_node_or_list(struct node* node);
 
 int array_multiplier(struct datatype* dtype,int index,int index_value);
 int array_offset(struct datatype* dtype,int index,int index_value);
+int struct_offset(struct compile_process* compile_proc,const char* struct_name,const char* var_name,struct node** var_node_out,int last_pos,int flags);
+struct node* variable_struct_or_union_largest_variable_node(struct node* var_node);
+struct node* body_largest_variable_node(struct node* body_node);
 
 /**
  * @brief Gets the variable size from the given variable node

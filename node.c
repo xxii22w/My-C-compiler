@@ -179,6 +179,11 @@ void make_else_node(struct node* body_node)
     node_create(&(struct node){.type=NODE_TYPE_STATEMENT_ELSE,.stmt.else_stmt.body_node=body_node});
 }
 
+void make_unary_node(const char* op, struct node* operand_node)
+{
+    node_create(&(struct node){.type=NODE_TYPE_UNARY,.unary.op=op, .unary.operand=operand_node});
+}
+
 struct node* node_from_sym(struct symbol* sym)
 {
     if(sym->type != SYMBOL_TYPE_NODE)
@@ -233,6 +238,11 @@ struct node* node_create(struct node* _node)
     node->binded.function = parser_current_function;
     node_push(node);
     return node;
+}
+
+bool node_is_struct_or_union(struct node* node)
+{
+    return node->type == NODE_TYPE_STRUCT || node->type == NODE_TYPE_UNION;
 }
 
 bool node_is_struct_or_union_variable(struct node* node)
@@ -299,11 +309,6 @@ bool node_is_expression(struct node* node,const char* op)
     return node->type == NODE_TYPE_EXPRESSION && S_EQ(node->exp.op,op);
 }
 
-bool is_array_node(struct node* node)
-{
-    return node_is_expression(node,"[]");
-}
-
 bool is_node_assignment(struct node* node)
 {
     if(node->type != NODE_TYPE_EXPRESSION)
@@ -314,4 +319,9 @@ bool is_node_assignment(struct node* node)
            S_EQ(node->exp.op, "-=") ||
            S_EQ(node->exp.op, "/=") ||
            S_EQ(node->exp.op, "*=");
+}
+
+bool node_valid(struct node* node)
+{
+    return node && node->type != NODE_TYPE_BLANK;
 }
