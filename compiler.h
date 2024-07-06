@@ -720,6 +720,46 @@ struct resolver_array_data
 
 enum
 {
+    RESOLVER_DEFAULT_ENTITY_TYPE_STACK,
+    RESOLVER_DEFAULT_ENTITY_TYPE_SYMBOL
+};
+
+enum
+{
+    RESOLVER_DEFAULT_ENTITY_FLAG_IS_LOCAL_STACK  = 0b00000001
+};
+
+enum
+{
+    RESOLVER_DEFAULT_ENTITY_DATA_TYPE_VARIABLE,
+    RESOLVER_DEFAULT_ENTITY_DATA_TYPE_FUNCTION,
+    RESOLVER_DEFAULT_ENTITY_DATA_TYPE_ARRAY_BRACKET,
+};
+
+struct resolver_default_entity_data
+{
+    // i.e variable,function,structure
+    int type;
+    // ebp 是基指针（Base Pointer）寄存器的常用名称，它通常用于指向当前函数的底部（或顶部，取决于栈帧的增长方向）。方括号 [] 用于表示内存地址的偏移
+    // [ebp-4]：这表示从基指针 ebp 减去4个字节的位置。在很多情况下，这种形式的地址用于访问函数的局部变量
+    // [var_name+4]：这表示从变量 var_name 的地址开始，加上4个字节的偏移。这种形式通常用于访问数组元素或者结构体中的成员
+    // this is the address [ebp-4],[var_name+4]
+    char address[60];
+    // ebp, var_name
+    char base_address[60];
+    // -4 
+    int offset;
+    // 与实体数据有关的标志
+    int flags;
+};
+
+struct resolver_default_scope_data
+{
+    int flags;
+};
+
+enum
+{
     RESOLVER_RESULT_FLAG_FAILED = 0b00000001,
     RESOLVER_RESULT_FLAG_RUNTIME_NEEDED_TO_FINISH_PATH = 0b00000010,
     RESOLVER_RESULT_FLAG_PROCESSING_ARRAY_ENTITIES = 0b00000100,
@@ -1045,6 +1085,13 @@ int array_offset(struct datatype* dtype,int index,int index_value);
 int struct_offset(struct compile_process* compile_proc,const char* struct_name,const char* var_name,struct node** var_node_out,int last_pos,int flags);
 struct node* variable_struct_or_union_largest_variable_node(struct node* var_node);
 struct node* body_largest_variable_node(struct node* body_node);
+
+struct resolver_entity *resolver_make_entity(struct resolver_process *process, struct resolver_result *result, struct datatype *custom_dtype, struct node *node, struct resolver_entity *guided_entity, struct resolver_scope *scope);
+struct resolver_process *resolver_new_process(struct compile_process *compiler, struct resolver_callbacks *callbacks);
+struct resolver_entity *resolver_new_entity_for_var_node(struct resolver_process *process, struct node *var_node, void *private, int offset);
+struct resolver_entity *resolver_register_function(struct resolver_process *process, struct node *func_node, void *private);
+struct resolver_scope *resolver_new_scope(struct resolver_process *resolver, void *private, int flags);
+void resolver_finish_scope(struct resolver_process *resolver);
 
 /**
  * @brief Gets the variable size from the given variable node
