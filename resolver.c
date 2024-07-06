@@ -9,6 +9,7 @@ struct resolver_result *resolver_follow(struct resolver_process *resolver, struc
 struct resolver_entity* resolver_follow_array_bracket(struct resolver_process* resolver, struct node* node, struct resolver_result* result);
 struct resolver_entity *resolver_follow_part_return_entity(struct resolver_process *resolver, struct node *node, struct resolver_result *result);
 
+
 bool resolver_result_failed(struct resolver_result* result)
 {
     return result->flags & RESOLVER_RESULT_FLAG_FAILED;
@@ -897,13 +898,231 @@ void resolver_execute_rules(struct resolver_process *resolver, struct resolver_r
 }
 
 // 解析器合并编译时间
-void resolver_merge_compile_times(struct resolver_process *resolver, struct resolver_result *result)
+struct resolver_entity* resolver_merge_compile_time_result(struct resolver_process* resolver, struct resolver_result* result, struct resolver_entity* left_entity, struct resolver_entity* right_entity)
 {
+    // 这个函数尝试合并两个解析实体 left_entity 和 right_entity
+    if(left_entity && right_entity)
+    {
+        if(left_entity & RESOLVER_ENTITY_FLAG_NO_MERGE_WITH_NEXT_ENTITY || right_entity & RESOLVER_ENTITY_FLAG_NO_MERGE_WITH_LEFT_ENTITY)
+        {
+            goto no_merge_possible;
+        }
+
+        // 使用回调函数 resolver->callbacks.merge_entities 尝试合并两个实体。如果合并成功，返回新的合并实体 result_entity。
+        struct resolver_entity* result_entity = resolver->callbacks.merge_entities(resolver,result,left_entity,right_entity);
+
+        if(!result_entity)
+        {
+            goto no_merge_possible;
+        }
+
+        return result_entity;
+    }
+no_merge_possible:
+    return NULL;
+    
 }
+
+// 这个函数使用循环和 resolver_result_pop 函数从解析结果中弹出两个解析实体，尝试将它们合并
+void _resolver_merge_compile_times(struct resolver_process *resolver, struct resolver_result *result)
+{
+    struct vector* saved_entities = vector_create(sizeof(struct resolver_entity*));
+    while(1)
+    {
+        struct resolver_entity* right_entity = resolver_result_pop(result);
+        struct resolver_entity* left_entity = resolver_result_pop(result);
+        if(!right_entity)
+        {
+            break;
+        }
+
+        // 如果只有一个实体（没有 left_entity），将 right_entity 推回结果并结束循环
+        if(!left_entity)
+        {
+            // only one entity
+            resolver_result_entity_push(result,right_entity);
+            break;
+        }
+
+        // 如果两个实体可以合并，调用 resolver_merge_compile_time_result 函数进行合并。如果合并成功，将合并后的实体推回结果
+        struct resolver_entity* merged_entity = resolver_merge_compile_time_result(resolver,result,left_entity,right_entity);
+        if(merged_entity)
+        {
+            resolver_result_entity_push(result,merged_entity);
+        }
+
+        // 如果不能合并，将 right_entity 设置为不允许与左侧实体合并，并将 right_entity 存储在 saved_entities 向量中
+        right_entity->flags |= RESOLVER_ENTITY_FLAG_NO_MERGE_WITH_LEFT_ENTITY;
+        vector_push(saved_entities,&right_entity);
+        // 左侧实体返回结果，因为我们可能会与下一个实体合并
+        resolver_result_entity_push(result,left_entity);
+    }
+    // 循环结束后，使用 resolver_push_vector_of_entities 函数将 saved_entities 中存储的实体推回结果
+    resolver_push_vector_of_entities(result,saved_entities);
+    vector_free(saved_entities);
+}
+
+// 这个函数的目的是合并编译时的解析结果
+void resolver_merge_compile_times(struct resolver_process* resolver,struct resolver_result* result)
+{
+    size_t total_entities = 0;
+    do
+    {
+        total_entities = result->count;
+        _resolver_merge_compile_times(resolver,result);
+    } while (total_entities != 1 && total_entities != result->count);
+    
+}
+
+// 这个函数用于设置解析结果的最终标志
+void resolver_finalize_result_flags(struct resolver_process* resolver,struct resolver_result* result)
+{
+    int flags = RESOLVER_RESULT_FLAG_FIRST_ENTITY_PUSH_VALUE;
+    // 我们需要遍历所有结果
+    struct resolver_entity* entity = result->entity;
+    struft resolver_entity* first_entity = entity;
+    struct resolver_entity* last_entity = result->last_entity;
+    bool does_get_address = false;
+    if(entity == last_entity)
+    {
+        // 我们只有一个实体
+        if(last_entity->type == RESOLVER_ENTITY_TYPE_VARIABLE &&
+            datatype_is_struct_or_union_non_pointer(&last_entity->dtype))
+        {
+            // 编译器生成的代码可能会首先将一个变量的地址或值加载到 ebx 寄存器中。
+            flags |= RESOLVER_RESULT_FLAG_FIRST_ENTITY_LOAD_TO_EBX;
+            flags &= ~RESOLVER_RESULT_FLAG_FIRST_ENTITY_PUSH_VALUE;
+        }
+
+        result->flags = flags;
+        return;
+    }
+
+    // 遍历解析结果中的所有实体，根据实体的类型和属性设置不同的标志
+    while(entity)
+    {
+        if(entity->flags & RESOLVER_ENTITY_FLAG_DO_INDIRECTION)
+        {
+            // 加载第一个实体的地址，因为我们有间接地址
+            flags |= RESOLVER_RESULT_FLAG_FIRST_ENTITY_LOAD_TO_EBX | RESOLVER_RESULT_FLAG_FINAL_INDIRECTION_REQUIRED_FOR_VALUE;
+            flags &= ~RESOLVER_RESULT_FLAG_FIRST_ENTITY_PUSH_VALUE;// 清除 flags 中 RESOLVER_RESULT_FLAG_FIRST_ENTITY_PUSH_VALUE 对应的位。
+        }
+
+        if (entity->type == RESOLVER_ENTITY_TYPE_UNARY_GET_ADDRESS)
+        {
+            flags |= RESOLVER_RESULT_FLAG_FIRST_ENTITY_LOAD_TO_EBX | RESOLVER_RESULT_FLAG_DOES_GET_ADDRESS;
+            flags &= ~RESOLVER_RESULT_FLAG_FIRST_ENTITY_PUSH_VALUE | RESOLVER_RESULT_FLAG_FINAL_INDIRECTION_REQUIRED_FOR_VALUE;
+            does_get_address = true;
+        }
+
+        if (entity->type == RESOLVER_ENTITY_TYPE_FUNCTION_CALL)
+        {
+            flags |= RESOLVER_RESULT_FLAG_FIRST_ENTITY_LOAD_TO_EBX;
+            flags &= ~RESOLVER_RESULT_FLAG_FIRST_ENTITY_PUSH_VALUE;
+        }
+
+        if (entity->type == RESOLVER_ENTITY_TYPE_ARRAY_BRACKET)
+        {
+            if(entity->dtype.flags & DATATYPE_FLAG_IS_POINTER)
+            {
+                flags |= RESOLVER_RESULT_FLAG_FIRST_ENTITY_PUSH_VALUE;
+                flags &= ~RESOLVER_RESULT_FLAG_FIRST_ENTITY_LOAD_TO_EBX;
+            }
+            else
+            {
+                flags |= RESOLVER_RESULT_FLAG_FIRST_ENTITY_LOAD_TO_EBX;
+                flags &= ~RESOLVER_RESULT_FLAG_FIRST_ENTITY_PUSH_VALUE;
+            }
+
+            if (entity->flags & RESOLVER_ENTITY_FLAG_IS_POINTER_ARRAY_ENTITY)
+            {
+                flags |= RESOLVER_RESULT_FLAG_FINAL_INDIRECTION_REQUIRED_FOR_VALUE;
+            }
+        }
+
+        if (entity->type == RESOLVER_ENTITY_TYPE_GENERAL)
+        {
+            flags |= RESOLVER_RESULT_FLAG_FIRST_ENTITY_LOAD_TO_EBX | RESOLVER_RESULT_FLAG_FINAL_INDIRECTION_REQUIRED_FOR_VALUE;
+            flags &= ~RESOLVER_RESULT_FLAG_FIRST_ENTITY_PUSH_VALUE;
+        }
+
+        entity = entity->next;
+    }
+
+    if(last_entity->dtype.flags & DATATYPE_FLAG_IS_ARRAY && (!does_get_address && last_entity->type == RESOLVER_ENTITY_TYPE_VARIABLE && ! (last_entity->flags & RESOLVER_ENTITY_FLAG_USES_ARRAY_BRACKETS)))
+    {
+        // char abc[50]; char* p = abc; abc[0];
+        flags &= ~RESOLVER_RESULT_FLAG_FINAL_INDIRECTION_REQUIRED_FOR_VALUE;
+    }
+    else if(last_entity->type == RESOLVER_ENTITY_TYPE_VARIABLE)
+    {
+        flags |= RESOLVER_RESULT_FLAG_FINAL_INDIRECTION_REQUIRED_FOR_VALUE;
+    }
+
+    if(does_get_address)
+    {
+        flags &= ~RESOLVER_RESULT_FLAG_FINAL_INDIRECTION_REQUIRED_FOR_VALUE;
+    }
+
+    result->flags |= flags;
+}
+
+// 这个函数处理一元操作符（如解引用 * 和取地址 &）的最终化
+void resolver_finalize_unary(struct resolver_process* resolver, struct resolver_result* result, struct resolver_entity* entity)
+{
+    struct resolver_entity* previous_entity = entity->prev;
+    if(!previous_entity)
+    {
+        return;
+    }
+
+    entity->scope = previous_entity->scope;
+    entity->dtype = previous_entity->dtype;
+    entity->offset = previous_entity->offset;
+    // 如果是解引用操作，减少指针深度；如果是取地址操作，增加指针深度并设置指针标志
+    if(entity->type == RESOLVER_ENTITY_TYPE_UNARY_INDIRECTION)
+    {
+        int indirection_depth = entity->indirection.depth;
+        entity->dtype.pointer_depth -= indirection_depth;
+        if(entity->dtype.pointer_depth <= 0)
+        {
+            entity->dtype.flags &= ~DATATYPE_FLAG_IS_POINTER;
+        }
+    }
+    else if(entity->type == RESOLVER_ENTITY_TYPE_UNARY_GET_ADDRESS)
+    {
+        entity->dtype.flags |= DATATYPE_FLAG_IS_POINTER;
+        entity->dtype.pointer_depth++;
+    }
+}
+
+// 这个函数用于最终确定结果中最后一个实体的状态
+void resolver_finalize_last_entity(struct resolver_process* resolver, struct resolver_result* result)
+{
+    struct resolver_entity* last_entity = resolver_result_peek(result);
+    switch(last_entity->type)
+    {
+        case RESOLVER_ENTITY_TYPE_UNARY_INDIRECTION:
+        case RESOLVER_ENTITY_TYPE_UNARY_GET_ADDRESS:
+            resolver_finalize_unary(resolver, result, last_entity);
+        break;
+    }
+}
+
 
 // 解析器最终结果
 void resolver_finalize_result(struct resolver_process *resolver, struct resolver_result *result)
 {
+    struct resolver_entity* first_entity = resolver_result_entity_root(reuslt);
+    if(!first_entity)
+    {
+        // 堆栈中什么都没有
+        return;
+    }
+
+    resolve->callbacks.set_result_base(result,first_entity);
+    resolver_finalize_result_flags(resolver,result);
+    resolver_finalize_last_entity(resolver,result);
 }
 
 // 解析器跟踪
