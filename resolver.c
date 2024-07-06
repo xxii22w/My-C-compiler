@@ -442,7 +442,7 @@ struct resolver_entity* resolver_create_new_entity_for_function_call(struct reso
     return entity;
 }
 
-struct resolver_entity* resolver_regster_function(struct resolver_process* process, struct node* func_node, void* private)
+struct resolver_entity* resolver_register_function(struct resolver_process* process, struct node* func_node, void* private)
 {
     struct resolver_entity* entity = resolver_create_new_entity(NULL, RESOLVER_ENTITY_TYPE_FUNCTION, private);
     if (!entity)
@@ -865,7 +865,7 @@ void resolver_rule_apply_rules(struct resolver_entity* rule_entity,struct resolv
 
 void resolver_push_vector_of_entities(struct resolver_result* result,struct vector* vec)
 {
-    vector_set_peek_pointer(vec);
+    vector_set_peek_pointer_end(vec);
     vector_set_flag(vec,VECTOR_FLAG_PEEK_DECREMENT);
     struct resolver_entity* entity = vector_peek_ptr(vec);
     while(entity)
@@ -901,9 +901,10 @@ void resolver_execute_rules(struct resolver_process *resolver, struct resolver_r
 struct resolver_entity* resolver_merge_compile_time_result(struct resolver_process* resolver, struct resolver_result* result, struct resolver_entity* left_entity, struct resolver_entity* right_entity)
 {
     // 这个函数尝试合并两个解析实体 left_entity 和 right_entity
-    if(left_entity && right_entity)
+    if (left_entity && right_entity)
     {
-        if(left_entity & RESOLVER_ENTITY_FLAG_NO_MERGE_WITH_NEXT_ENTITY || right_entity & RESOLVER_ENTITY_FLAG_NO_MERGE_WITH_LEFT_ENTITY)
+        if (left_entity->flags & RESOLVER_ENTITY_FLAG_NO_MERGE_WITH_NEXT_ENTITY ||
+            right_entity->flags & RESOLVER_ENTITY_FLAG_NO_MERGE_WITH_LEFT_ENTITY)
         {
             goto no_merge_possible;
         }
@@ -980,7 +981,7 @@ void resolver_finalize_result_flags(struct resolver_process* resolver,struct res
     int flags = RESOLVER_RESULT_FLAG_FIRST_ENTITY_PUSH_VALUE;
     // 我们需要遍历所有结果
     struct resolver_entity* entity = result->entity;
-    struft resolver_entity* first_entity = entity;
+    struct resolver_entity* first_entity = entity;
     struct resolver_entity* last_entity = result->last_entity;
     bool does_get_address = false;
     if(entity == last_entity)
@@ -1113,14 +1114,14 @@ void resolver_finalize_last_entity(struct resolver_process* resolver, struct res
 // 解析器最终结果
 void resolver_finalize_result(struct resolver_process *resolver, struct resolver_result *result)
 {
-    struct resolver_entity* first_entity = resolver_result_entity_root(reuslt);
+    struct resolver_entity* first_entity = resolver_result_entity_root(result);
     if(!first_entity)
     {
         // 堆栈中什么都没有
         return;
     }
 
-    resolve->callbacks.set_result_base(result,first_entity);
+    resolver->callbacks.set_result_base(result,first_entity);
     resolver_finalize_result_flags(resolver,result);
     resolver_finalize_last_entity(resolver,result);
 }

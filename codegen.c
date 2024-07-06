@@ -5,15 +5,36 @@
 #include <assert.h>
 
 static struct compile_process* current_process = NULL;
+static struct node* current_function = NULL;
+
+struct history
+{
+    int flags;
+};
+
+static struct history* history_begin(int flags)
+{
+    struct history* history = calloc(1,sizeof(struct history));
+    history->flags = flags;
+    return history;
+}
+
+static struct history* history_down(struct history* history,int flags)
+{
+    struct history* new_history = calloc(1,sizeof(struct history));
+    memcpy(new_history,history,sizeof(struct history));
+    new_history->flags = flags;
+    return new_history;
+}
 
 void codegen_new_scope(int flags)
 {
-    #warning "The resolver needs to exist for this to work"
+    resolver_default_new_scope(current_process->resolver,flags);
 }
 
 void codegen_finish_scope()
 {
-    #warning "You need to invent a resolver for this to work"
+    resolver_default_finish_scope(current_process->resolver);
 }
 
 struct node* codegen_node_next()
@@ -56,6 +77,83 @@ void asm_push_no_nl(const char* ins,...)
         vfprintf(current_process->ofile, ins, args);
         va_end(args);
     }
+}
+
+// 这个函数的设计意图可能是为了简化汇编指令的生成过程，特别是对于需要将数据推送到栈上的指令
+// 同时，它还更新了当前函数的栈帧状态，这在编译器生成中间代码或目标代码时是非常重要的
+void asm_push_ins_push(const char* fmt,int stack_entity_type,const char* stack_entity_name,...)
+{
+    char tmp_buf[200];
+    sprintf(tmp_buf,"push %s",fmt);
+    va_list args;
+    va_start(args,stack_entity_name);
+    asm_push_args(tmp_buf,args);
+    va_end(args);
+
+    assert(current_function);
+    stackframe_push(current_function,&(struct stack_frame_element){.type=stack_entity_type,.name=stack_entity_name});
+}
+
+int asm_push_ins_pop(const char* fmt,int expecting_stack_entity_type,const char* expecting_stack_entity_name,...)
+{
+    char tmp_buf[200];
+    sprintf(tmp_buf,"pop %s",fmt);
+    va_list args;
+    va_start(args,expecting_stack_entity_name);
+    asm_push_args(tmp_buf,args);
+    va_end(args);
+
+    assert(current_function);
+    struct stack_frame_element* element = stackframe_back(current_function);
+    int flags = element->flags;
+    // 调用 stackframe_pop_expecting 函数从当前函数的栈帧中弹出一个元素
+    stackframe_pop_expecting(current_function, expecting_stack_entity_type, expecting_stack_entity_name);
+    return flags;
+}
+
+void asm_push_ebp()
+{
+    asm_push_ins_push("ebp",STACK_FRAME_ELEMENT_TYPE_SAVED_BP,"function_entry_saved_ebp");
+}
+
+void asm_pop_ebp()
+{
+    asm_push_ins_pop("ebp",STACK_FRAME_ELEMENT_TYPE_SAVED_BP,"function_entry_saved_ebp");
+}
+
+void codegen_stack_sub_with_name(size_t stack_size,const char* name)
+{
+    if(stack_size != 0)
+    {
+        stackframe_sub(current_function,STACK_FRAME_ELEMENT_TYPE_UNKNOWN,name,stack_size);
+        // 调用 asm_push 函数，生成一条 sub 汇编指令，这条指令将栈指针 esp 减去 stack_size 指定的值
+        // esp 寄存器通常用作栈指针，指向栈顶。通过减少 esp 的值，可以为局部变量在栈上分配空间。相反，增加 esp 的值可以释放之前分配的空间。
+        asm_push("sub esp, %lld",stack_size);
+    }
+}
+
+void codegen_stack_sub(size_t stack_size)
+{
+    codegen_stack_sub_with_name(stack_size,"literal_stack_change");
+}
+
+void codegen_stack_add_with_name(size_t stack_size,const char* name)
+{
+    if(stack_size != 0)
+    {
+        stackframe_add(current_function,STACK_FRAME_ELEMENT_TYPE_UNKNOWN,name,stack_size);
+        asm_push("add esp, %lld",stack_size);
+    }
+}
+
+void codegen_stack_add(size_t stack_size)
+{
+    codegen_stack_add_with_name(stack_size,"literal_stack_change");
+}
+
+struct resolver_entity* codegen_new_scope_entity(struct node* var_node,int offset,int flags)
+{
+    return resolver_default_new_scope_entity(current_process->resolver, var_node, offset, flags);
 }
 
 const char* codegen_get_label_for_string(const char* str)
@@ -298,9 +396,81 @@ void codegen_generate_data_section()
     }
 }
 
+struct resolver_entity* codegen_register_function(struct node* func_node, int flags)
+{
+    return resolver_default_register_function(current_process->resolver, func_node, flags);
+}
+
+void codegen_generate_function_prototype(struct node* node)
+{
+    codegen_register_function(node,0);
+    // 这行代码的作用是生成一个声明外部函数的汇编指令。
+    asm_push("extern %s",node->func.name);
+}
+
+void codegen_generate_function_arguments(struct vector* argument_vector)
+{
+    vector_set_peek_pointer(argument_vector,0);
+    struct node* current = vector_peek_ptr(argument_vector);
+    while(current)
+    {
+        codegen_new_scope_entity(current,current->var.aoffset,RESOLVER_DEFAULT_ENTITY_FLAG_IS_LOCAL_STACK);
+        current = vector_peek_ptr(argument_vector);
+    }
+}
+
+void codegen_generate_body(struct node* node,struct history* history)
+{
+    #warning "TODO generate the body"
+}
+
+void codegen_generate_function_with_body(struct node* node)
+{
+    codegen_register_function(node,0);
+    asm_push("global %s",node->func.name);
+    asm_push("; %s function",node->func.name);  // 这是一个注释指令，用于在汇编代码中添加可读性
+    asm_push("%s:",node->func.name);            // 这定义了一个标签，通常是函数的入口点
+
+    asm_push_ebp();                             // 用于将基指针寄存器 ebp 压入栈中，以保存当前的栈帧基地址
+    asm_push("mov ebp, esp");                   // 这条指令将堆栈指针 esp 的值移动到基指针 ebp 中
+    codegen_stack_sub(C_ALIGN(function_node_stack_size(node)));
+    codegen_new_scope(RESOLVER_DEFAULT_ENTITY_FLAG_IS_LOCAL_STACK);
+    codegen_generate_function_arguments(function_node_argument_vec(node));
+
+    codegen_generate_body(node->func.body_n, history_begin(IS_ALONE_STATEMENT));
+    codegen_finish_scope();
+    codegen_stack_add(C_ALIGN(function_node_stack_size(node)));
+    asm_pop_ebp();
+    stackframe_assert_empty(current_function);
+    asm_push("ret");        // 这条指令生成 ret 指令，用于结束函数的执行并返回到调用者
+}
+
+void codegen_generate_function(struct node* node)
+{
+    current_function = node;
+    if (function_node_is_prototype(node))
+    {
+        codegen_generate_function_prototype(node);
+        return;
+    }
+
+    codegen_generate_function_with_body(node);
+}
+
+
 void codegen_generate_root_node(struct node* node)
 {
-    // PROCESS ANY FUNCTIONS.
+    switch (node->type)
+    {
+        case NODE_TYPE_VARIABLE:
+            // 我们之前在数据部分处理过这个问题
+            break;
+            
+        case NODE_TYPE_FUNCTION:
+            codegen_generate_function(node);
+        break;
+
+    }
 }
 
 void codegen_generate_root()

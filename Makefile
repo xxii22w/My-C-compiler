@@ -1,6 +1,6 @@
 OBJECTS= ./build/compiler.o ./build/cprocess.o ./build/lexer.o ./build/token.o ./build/lex_process.o ./build/parser.o ./build/codegen.o \
-./build/scope.o ./build/symresolver.o ./build/fixup.o ./build/array.o ./build/datatype.o ./build/node.o ./build/expressionable.o \
-./build/helper.o ./build/helpers/buffer.o ./build/helpers/vector.o ./build/stackframe.o ./build/resolver.o ./build/rdefault.o
+./build/scope.o ./build/symresolver.o ./build/fixup.o ./build/rdefault.o ./build/array.o ./build/datatype.o ./build/node.o ./build/expressionable.o \
+./build/helper.o ./build/helpers/buffer.o  ./build/helpers/vector.o ./build/stackframe.o ./build/resolver.o 
 INCLUDES= -I./
 
 all: ${OBJECTS}

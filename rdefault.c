@@ -2,7 +2,6 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <memory.h>
-
 struct resolver_default_entity_data* resolver_default_entity_private(struct resolver_entity* entity)
 {
     return entity->private;
@@ -13,57 +12,56 @@ struct resolver_default_scope_data* resolver_default_scope_private(struct resolv
     return scope->private;
 }
 
-char* resolver_default_stack_asm_address(int stack_offset,char* out)
+char* resolver_default_stack_asm_address(int stack_offset, char* out)
 {
-    if(stack_offset < 0)
+    if (stack_offset < 0)
     {
-        sprintf(out,"ebp%i",stack_offset);
+        sprintf(out, "ebp%i", stack_offset);
         return out;
     }
 
-    sprintf(out,"ebp+%i",stack_offset);
+    sprintf(out, "ebp+%i", stack_offset);
     return out;
 }
 
 struct resolver_default_entity_data* resolver_default_new_entity_data()
 {
-    struct resolver_default_entity_data* entity_data = calloc(sizeof(struct resolver_default_entity_data),1);
+    struct resolver_default_entity_data* entity_data = calloc(sizeof(struct resolver_default_entity_data), 1);
     return entity_data;
 }
 
 void resolver_default_global_asm_address(const char* name, int offset, char* address_out)
 {
-    if(offset == 0)
+    if (offset == 0)
     {
-        sprintf(address_out,"%s",name);
+        sprintf(address_out, "%s", name);
         return;
     }
 
-    sprintf(address_out,"%s+%i",name,offset);
+    sprintf(address_out, "%s+%i", name, offset);
 }
 
 void resolver_default_entity_data_set_address(struct resolver_default_entity_data* entity_data, struct node* var_node, int offset, int flags)
 {
-    if(!var_node)
+    if (!var_node)
     {
         return;
     }
-
-    if(!variable_node(var_node)->var.name)
+    if (!variable_node(var_node)->var.name)
     {
         return;
     }
 
     entity_data->offset = offset;
-    if(flags & RESOLVER_DEFAULT_ENTITY_FLAG_IS_LOCAL_STACK)
+    if (flags & RESOLVER_DEFAULT_ENTITY_FLAG_IS_LOCAL_STACK)
     {
-        resolver_default_stack_asm_address(offset,entity_data->address);
-        sprintf(entity_data->base_address,"ebp");
+        resolver_default_stack_asm_address(offset, entity_data->address);
+        sprintf(entity_data->base_address, "ebp");
     }
     else
     {
-        resolver_default_global_asm_address(variable_node(var_node)->var.name,offset,entity_data->address);
-        sprintf(entity_data->base_address,"%s",variable_node(var_node)->var.name);
+        resolver_default_global_asm_address(variable_node(var_node)->var.name, offset, entity_data->address);
+        sprintf(entity_data->base_address, "%s", variable_node(var_node)->var.name);
     }
 }
 
@@ -71,17 +69,16 @@ void* resolver_default_make_private(struct resolver_entity* entity, struct node*
 {
     struct resolver_default_entity_data* entity_data = resolver_default_new_entity_data();
     int entity_flags = 0x00;
-    if(entity->flags & RESOLVER_ENTITY_FLAG_IS_STACK)
+    if (entity->flags & RESOLVER_ENTITY_FLAG_IS_STACK)
     {
         entity_flags |= RESOLVER_DEFAULT_ENTITY_FLAG_IS_LOCAL_STACK;
     }
-
     entity_data->offset = offset;
     entity_data->flags = entity_flags;
     entity_data->type = entity->type;
-    if(variable_node(node))
+    if (variable_node(node))
     {
-        resolver_default_entity_data_set_address(entity_data,variable_node(node),offset,entity_flags);
+        resolver_default_entity_data_set_address(entity_data, variable_node(node), offset, entity_flags);
     }
 
     return entity_data;
@@ -90,13 +87,13 @@ void* resolver_default_make_private(struct resolver_entity* entity, struct node*
 void resolver_default_set_result_base(struct resolver_result* result, struct resolver_entity* base_entity)
 {
     struct resolver_default_entity_data* data = resolver_default_entity_private(base_entity);
-    if(!data)
+    if (!data)
     {
         return;
     }
 
-    strncpy(result->base.base_address,data->base_address,sizeof(result->base.base_address));
-    strncpy(result->base.address,data->address,sizeof(result->base.address));
+    strncpy(result->base.base_address, data->base_address, sizeof(result->base.base_address));
+    strncpy(result->base.address, data->address, sizeof(result->base.address));
     result->base.offset = data->offset;
 }
 
@@ -107,7 +104,7 @@ struct resolver_default_entity_data* resolver_default_new_entity_data_for_var_no
     entity_data->offset = offset;
     entity_data->flags = flags;
     entity_data->type = RESOLVER_DEFAULT_ENTITY_DATA_TYPE_VARIABLE;
-    resolver_default_entity_data_set_address(entity_data,variable_node(var_node),offset,flags);
+    resolver_default_entity_data_set_address(entity_data, variable_node(var_node), offset,flags);
     return entity_data;
 }
 
@@ -123,7 +120,7 @@ struct resolver_default_entity_data* resolver_default_new_entity_data_for_functi
     struct resolver_default_entity_data* entity_data = resolver_default_new_entity_data();
     entity_data->flags = flags;
     entity_data->type = RESOLVER_DEFAULT_ENTITY_DATA_TYPE_FUNCTION;
-    resolver_default_global_asm_address(func_node->func.name,0,entity_data->address);
+    resolver_default_global_asm_address(func_node->func.name, 0, entity_data->address);
     return entity_data;
 }
 
