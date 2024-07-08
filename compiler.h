@@ -155,6 +155,12 @@ enum
     COMPILER_FAILED_WITH_ERRORS
 };
 
+enum
+{
+    COMPILE_PROCESS_EXECUTE_MASM = 0b00000001,
+    COMPILE_PROCESS_EXPORT_AS_OBJECT = 0b00000010,
+};
+
 struct scope
 {
     int flags;
@@ -215,6 +221,9 @@ struct code_generator
     struct vector* entry_points;
     // vector of struct codegen_exit_point*
     struct vector* exit_points;
+
+    // vector of struct response*
+    struct vector* responses;
 };
 
 struct resolver_process;
@@ -988,6 +997,40 @@ enum
     EXPRESSION_IS_MODULAS = 0b10000000000000000000000000000000,
 };
 
+#define EXPRESSION_GEN_MATHABLE (       \
+    EXPRESSION_IS_ADDITION |           \
+    EXPRESSION_IS_SUBTRACTION |        \
+    EXPRESSION_IS_MULTIPLICATION |     \
+    EXPRESSION_IS_DIVISION |           \
+    EXPRESSION_IS_MODULAS |            \
+    EXPRESSION_IS_FUNCTION_CALL |      \
+    EXPRESSION_INDIRECTION |           \
+    EXPRESSION_GET_ADDRESS |           \
+    EXPRESSION_IS_ABOVE |              \
+    EXPRESSION_IS_ABOVE_OR_EQUAL |     \
+    EXPRESSION_IS_BELOW |              \
+    EXPRESSION_IS_BELOW_OR_EQUAL |     \
+    EXPRESSION_IS_EQUAL |              \
+    EXPRESSION_IS_NOT_EQUAL |          \
+    EXPRESSION_LOGICAL_AND |           \
+    EXPRESSION_LOGICAL_OR |            \
+    EXPRESSION_IN_LOGICAL_EXPRESSION | \
+    EXPRESSION_IS_BITSHIFT_LEFT |      \
+    EXPRESSION_IS_BITSHIFT_RIGHT |     \
+    EXPRESSION_IS_BITWISE_OR |         \
+    EXPRESSION_IS_BITWISE_AND |        \
+    EXPRESSION_IS_BITWISE_XOR)
+
+// 表达式不可继承
+#define EXPRESSION_UNINHERITABLE_FLAGS (            \
+      EXPRESSION_FLAG_RIGHT_NODE | EXPRESSION_IN_FUNCTION_CALL_ARGUMENTS | \
+      EXPRESSION_IS_ADDITION | EXPRESSION_IS_MODULAS | EXPRESSION_IS_SUBTRACTION | EXPRESSION_IS_MULTIPLICATION | \
+      EXPRESSION_IS_DIVISION | EXPRESSION_IS_ABOVE | EXPRESSION_IS_ABOVE_OR_EQUAL | \
+      EXPRESSION_IS_BELOW | EXPRESSION_IS_BELOW_OR_EQUAL | EXPRESSION_IS_EQUAL |    \
+      EXPRESSION_IS_NOT_EQUAL | EXPRESSION_LOGICAL_AND | \
+      EXPRESSION_IN_LOGICAL_EXPRESSION | EXPRESSION_IS_BITSHIFT_LEFT | EXPRESSION_IS_BITSHIFT_RIGHT | \
+      EXPRESSION_IS_BITWISE_OR | EXPRESSION_IS_BITWISE_AND | EXPRESSION_IS_BITWISE_XOR | EXPRESSION_IS_ASSIGNMENT | IS_ALONE_STATEMENT)
+
 enum
 {
     STRUCT_ACCESS_BACKWARDS = 0b00000001,
@@ -1126,9 +1169,9 @@ struct node* variable_node_or_list(struct node* node);
 
 int array_multiplier(struct datatype* dtype,int index,int index_value);
 int array_offset(struct datatype* dtype,int index,int index_value);
-int struct_offset(struct compile_process* compile_proc,const char* struct_name,const char* var_name,struct node** var_node_out,int last_pos,int flags);
-struct node* variable_struct_or_union_largest_variable_node(struct node* var_node);
-struct node* body_largest_variable_node(struct node* body_node);
+int struct_offset(struct compile_process *compile_proc, const char *struct_name, const char *var_name, struct node **var_node_out, int last_pos, int flags);
+struct node *variable_struct_or_union_largest_variable_node(struct node *var_node);
+struct node *body_largest_variable_node(struct node *body_node);
 
 struct resolver_entity *resolver_make_entity(struct resolver_process *process, struct resolver_result *result, struct datatype *custom_dtype, struct node *node, struct resolver_entity *guided_entity, struct resolver_scope *scope);
 struct resolver_process *resolver_new_process(struct compile_process *compiler, struct resolver_callbacks *callbacks);
@@ -1140,35 +1183,36 @@ struct resolver_result* resolver_follow(struct resolver_process* resolver,struct
 bool resolver_result_ok(struct resolver_result* result);
 struct resolver_entity* resolver_result_entity_root(struct resolver_result* result);
 struct resolver_entity* resolver_result_entity_next(struct resolver_entity* entity);
+struct resolver_entity *resolver_result_entity(struct resolver_result *result);
 
 
-bool function_node_is_prototype(struct node* node);
-size_t function_node_stack_size(struct node* node);
-struct vector* function_node_argument_vec(struct node* node);
+bool function_node_is_prototype(struct node *node);
+size_t function_node_stack_size(struct node *node);
+struct vector *function_node_argument_vec(struct node *node);
 
-struct resolver_default_entity_data* resolver_default_entity_private(struct resolver_entity* entity);
-struct resolver_default_scope_data* resolver_default_scope_private(struct resolver_scope* scope);
-char* resolver_default_stack_asm_address(int stack_offset, char* out);
-struct resolver_default_entity_data* resolver_default_new_entity_data();
-void resolver_default_global_asm_address(const char* name, int offset, char* address_out);
+struct resolver_default_entity_data *resolver_default_entity_private(struct resolver_entity *entity);
+struct resolver_default_scope_data *resolver_default_scope_private(struct resolver_scope *scope);
+char *resolver_default_stack_asm_address(int stack_offset, char *out);
+struct resolver_default_entity_data *resolver_default_new_entity_data();
+void resolver_default_global_asm_address(const char *name, int offset, char *address_out);
 
-void resolver_default_entity_data_set_address(struct resolver_default_entity_data* entity_data, struct node* var_node, int offset, int flags);
-void* resolver_default_make_private(struct resolver_entity* entity, struct node* node, int offset, struct resolver_scope* scope);
-void resolver_default_set_result_base(struct resolver_result* result, struct resolver_entity* base_entity);
-struct resolver_default_entity_data* resolver_default_new_entity_data_for_var_node(struct node* var_node, int offset, int flags);
-struct resolver_default_entity_data* resolver_default_new_entity_data_for_array_bracket(struct node* breacket_node);
-struct resolver_default_entity_data* resolver_default_new_entity_data_for_function(struct node* func_node, int flags);
-struct resolver_entity* resolver_default_new_scope_entity(struct resolver_process* resolver, struct node* var_node, int offset, int flags);
+void resolver_default_entity_data_set_address(struct resolver_default_entity_data *entity_data, struct node *var_node, int offset, int flags);
+void *resolver_default_make_private(struct resolver_entity *entity, struct node *node, int offset, struct resolver_scope *scope);
+void resolver_default_set_result_base(struct resolver_result *result, struct resolver_entity *base_entity);
+struct resolver_default_entity_data *resolver_default_new_entity_data_for_var_node(struct node *var_node, int offset, int flags);
+struct resolver_default_entity_data *resolver_default_new_entity_data_for_array_bracket(struct node *breacket_node);
+struct resolver_default_entity_data *resolver_default_new_entity_data_for_function(struct node *func_node, int flags);
+struct resolver_entity *resolver_default_new_scope_entity(struct resolver_process *resolver, struct node *var_node, int offset, int flags);
 
-struct resolver_entity* resolver_default_register_function(struct resolver_process* resolver, struct node* func_node, int flags);
+struct resolver_entity *resolver_default_register_function(struct resolver_process *resolver, struct node *func_node, int flags);
 
-void resolver_default_new_scope(struct resolver_process* resolver, int flags);
-void resolver_default_finish_scope(struct resolver_process* resolver);
-void* resolver_default_new_array_entity(struct resolver_result* result, struct node* array_entity_node);
-void resolver_default_delete_entity(struct resolver_entity*  entity);
-void resolver_default_delete_scope(struct resolver_scope* scope);
-struct resolver_entity* resolver_default_merge_entities(struct resolver_process* process, struct resolver_result* result, struct resolver_entity* left_entity, struct resolver_entity* right_entity);
-struct resolver_process* resolver_default_new_process(struct compile_process* compiler);
+void resolver_default_new_scope(struct resolver_process *resolver, int flags);
+void resolver_default_finish_scope(struct resolver_process *resolver);
+void *resolver_default_new_array_entity(struct resolver_result *result, struct node *array_entity_node);
+void resolver_default_delete_entity(struct resolver_entity *entity);
+void resolver_default_delete_scope(struct resolver_scope *scope);
+struct resolver_entity *resolver_default_merge_entities(struct resolver_process *process, struct resolver_result *result, struct resolver_entity *left_entity, struct resolver_entity *right_entity);
+struct resolver_process *resolver_default_new_process(struct compile_process *compiler);
 
 /**
  * @brief Gets the variable size from the given variable node
