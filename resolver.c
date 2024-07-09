@@ -355,6 +355,7 @@ struct resolver_entity* resolver_create_new_entity_for_var_node_custom_scope(str
     entity->scope = scope;
     assert(entity->scope);
     entity->dtype = var_node->var.type;
+    entity->var_data.dtype = var_node->var.type;
     entity->node = var_node;
     entity->name = var_node->var.name;
     entity->offset = offset;
@@ -1131,15 +1132,15 @@ struct resolver_result *resolver_follow(struct resolver_process *resolver, struc
 {
     assert(resolver);
     assert(node);
-    struct resolver_result* result = resolver_new_result(resolver);
-    resolver_follow_part(resolver,node,result);
-    if(!resolver_result_entity_root(result))
+    struct resolver_result *result = resolver_new_result(resolver);
+    resolver_follow_part(resolver, node, result);
+    if (!resolver_result_entity_root(result))
     {
         result->flags |= RESOLVER_RESULT_FLAG_FAILED;
     }
-    resolver_execute_rules(resolver,result);
-    resolver_merge_compile_times(resolver,result);
-    resolver_finalize_result(resolver,result);
+    resolver_execute_rules(resolver, result);
+    resolver_merge_compile_times(resolver, result);
+    resolver_finalize_result(resolver, result);
     return result;
 }
 
