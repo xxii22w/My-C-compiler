@@ -1,8 +1,5 @@
-const char* hello = "hello";
-
 int main()
 {
-    int b = 50;
-    int e = 20;
-    b = e + 10;
+    int a;
+    a = 1 && 0;
 }

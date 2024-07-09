@@ -21,11 +21,14 @@ int main(int argc, char** argv)
     {
         option = argv[3];
     }
+
     int compile_flags = COMPILE_PROCESS_EXECUTE_MASM;
+    // 表示编译输出应该是一个对象文件而不是可执行文件
     if (S_EQ(option, "object"))
     {
         compile_flags |= COMPILE_PROCESS_EXPORT_AS_OBJECT;
     }
+
     int res = compile_file(input_file, output_file, compile_flags);
     if (res == COMPILER_FILE_COMPILED_OK)
     {
@@ -40,6 +43,7 @@ int main(int argc, char** argv)
         printf("Unknown response for compile time\n");
     }
 
+    // 如果compile_flags包含COMPILE_PROCESS_EXECUTE_MASM标志，说明需要使用NASM汇编器和GCC链接器进一步处理文件
     if (compile_flags & COMPILE_PROCESS_EXECUTE_MASM)
     {
         char nasm_output_file[40];
@@ -51,6 +55,7 @@ int main(int argc, char** argv)
         }
         else
         {
+            // 使用NASM生成对象文件。否则，使用NASM生成对象文件后，再使用GCC链接生成可执行文件
             sprintf(nasm_cmd, "nasm -f elf32 %s -o %s && gcc -m32 %s -o %s", output_file, nasm_output_file, nasm_output_file, output_file);
         }
 

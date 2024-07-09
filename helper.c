@@ -8,6 +8,45 @@ size_t variable_size(struct node* var_node)
     return datatype_size(&var_node->var.type);
 }
 
+struct datatype* datatype_thats_a_pointer(struct datatype* d1,struct datatype* d2)
+{
+    if(d1->flags & DATATYPE_FLAG_IS_POINTER)
+    {
+        return d1;
+    }
+
+    if(d2->flags & DATATYPE_FLAG_IS_POINTER)
+    {
+        return d2;
+    }
+
+    return NULL;
+}
+
+bool is_logical_operator(const char* op)
+{
+    return S_EQ(op,"&&") || S_EQ(op,"||");
+}
+
+bool is_logical_node(struct node* node)
+{
+    return node->type == NODE_TYPE_EXPRESSION && is_logical_operator(node->exp.op);
+}
+
+struct datatype* datatype_pointer_reduce(struct datatype* datatype,int by)
+{
+    struct datatype* new_datatype = calloc(1,sizeof(struct datatype));
+    memcpy(new_datatype,datatype,sizeof(struct datatype));
+    new_datatype->pointer_depth -= by;
+    if(new_datatype->pointer_depth <= 0)
+    {
+        new_datatype->flags &= ~DATATYPE_FLAG_IS_POINTER;
+        new_datatype->pointer_depth = 0;
+    }
+
+    return new_datatype;
+}
+
 size_t variable_size_for_list(struct node* var_list_node)
 {
     assert(var_list_node->type == NODE_TYPE_VARIABLE_LIST);

@@ -80,9 +80,21 @@ bool codegen_response_has_entity(struct response* res)
     return codegen_response_acknowledged(res) && res->flags & RESPONSE_FLAG_RESOLVED_ENTITY && res->data.resolved_entity;
 }
 
+struct history_exp
+{
+    const char* logical_start_op;
+    char logical_end_label[20];
+    char logical_end_laabel_positive[20];
+};
+
 struct history
 {
     int flags;
+    union 
+    {
+        struct history_exp exp;
+    };
+    
 };
 
 static struct history* history_begin(int flags)
@@ -1164,15 +1176,92 @@ void codegen_gen_math_for_value(const char* reg, const char* value, int flags, b
 
 }
 
+void codegen_setup_new_logical_expression(struct history* history,struct node* node)
+{
+    int label_index = codegen_label_count();
+    sprintf(history->exp.logical_end_label,".endc_%i",label_index);
+    sprintf(history->exp.logical_end_laabel_positive,".endc_%i_positive",label_index);
+    history->exp.logical_start_op = node->exp.op;
+    history->flags |= EXPRESSION_IN_LOGICAL_EXPRESSION;
+
+}
+
+void codegen_generate_logical_cmp_and(const char* reg,const char* fail_label)
+{
+    // 比较寄存器 reg 的值是否为0，如果是，则跳转到由 fail_label 指定的标签 je (jump if equal, 即如果相等则跳转) 指令
+    asm_push("cmp %s, 0",reg);
+    asm_push("je %s",fail_label);
+}
+
+void codegen_generate_logical_cmp_or(const char* reg,const char* equal_label)
+{
+    asm_push("cmp %s, 0",reg);
+    asm_push("js %s",equal_label);
+}
+
+void codegen_generate_logical_cmp(const char* op,const char* fail_label,const char* equal_label)
+{
+    if(S_EQ(op,"&&"))
+    {
+        codegen_generate_logical_cmp_and("eax",fail_label);
+    }
+    else if(S_EQ(op,"||"))
+    {
+        codegen_generate_logical_cmp_or("eax",equal_label);
+    }
+}
+
+void codegen_generate_end_labels_for_logical_expression(const char* op, const char* end_label, const char* end_label_positive)
+{
+    if(S_EQ(op,"&&"))
+    {
+        asm_push("; && END CLAUSE");            // 生成注释,说明这是 "&&" 结束子句
+        asm_push("mov eax, 1");                 // 将立即数 1 移动到 eax 寄存器，表示逻辑真
+        asm_push("jmp %s",end_label_positive);  // 使用 jmp 指令跳转到 end_label_positive 标签，跳过后续的逻辑假处理代码
+        asm_push("%s:",end_label);              // 使用 end_label 定义一个标签，这是逻辑表达式结束的位置
+        asm_push("xor eax, eax");               // 使用 xor 指令将 eax 寄存器的值置为 0，表示逻辑假
+        asm_push("%s:",end_label_positive);     // 使用 end_label_positive 定义标签，这是逻辑表达式为真的结束位置
+    }
+    else if(S_EQ(op,"||"))
+    {
+        asm_push("; || END CLAUSE");    
+        asm_push("jmp %s",end_label);           // 使用 jmp 指令直接跳转到 end_label，这是逻辑表达式结束的位置
+        asm_push("%s:",end_label_positive);     // 使用 end_label_positive 定义一个标签，这是逻辑表达式为真的结束位置
+        asm_push("mov eax, 1");                 // 将立即数 1 移动到 eax 寄存器，表示逻辑真
+        asm_push("%s:",end_label);              // 使用 end_label 定义标签，这是逻辑表达式为假的结束位置
+    }
+}
+
+void codegen_generate_exp_node_for_logical_arithmetic(struct node *node, struct history *history)
+{
+    bool start_of_logical_exp = !(history->flags & EXPRESSION_IN_LOGICAL_EXPRESSION);
+    if(start_of_logical_exp)
+    {
+        codegen_setup_new_logical_expression(history,node);
+    }
+    codegen_generate_expressionable(node->exp.left,history_down(history,history->flags | EXPRESSION_IN_LOGICAL_EXPRESSION));
+    asm_push_ins_pop("eax",STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE,"result_value");
+    codegen_generate_logical_cmp(node->exp.op,history->exp.logical_end_label,history->exp.logical_end_laabel_positive);
+    codegen_generate_expressionable(node->exp.right, history_down(history, history->flags | EXPRESSION_IN_LOGICAL_EXPRESSION));
+    if (!is_logical_node(node->exp.right))
+    {
+        asm_push_ins_pop("eax", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value");
+        codegen_generate_logical_cmp(node->exp.op, history->exp.logical_end_label, history->exp.logical_end_laabel_positive);
+        codegen_generate_end_labels_for_logical_expression(node->exp.op, history->exp.logical_end_label, history->exp.logical_end_laabel_positive);
+        asm_push_ins_push("eax", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value");
+    }
+
+}
+
 void codegen_generate_exp_node_for_arithmetic(struct node* node, struct history* history)
 {
     assert(node->type == NODE_TYPE_EXPRESSION);
     int flags = history->flags;
 
-    // if (is_logical_operator(node->exp.op))
-    // {
-    //     codegen_generate_exp_node_for_logical_arithmetic
-    // }
+    if (is_logical_operator(node->exp.op))
+    {
+        codegen_generate_exp_node_for_logical_arithmetic(node,history);
+    }
 
     struct node* left_node = node->exp.left;
     struct node* right_node = node->exp.right;
@@ -1180,12 +1269,13 @@ void codegen_generate_exp_node_for_arithmetic(struct node* node, struct history*
     codegen_generate_expressionable(left_node, history_down(history, flags));
     codegen_generate_expressionable(right_node, history_down(history, flags));
     struct datatype last_dtype = datatype_for_numeric();
-    asm_datatype_back(&last_dtype);
+    asm_datatype_back(&last_dtype); // 将汇编数据类型压入栈
     if (codegen_can_gen_math(op_flags))
     {
         struct datatype right_dtype = datatype_for_numeric();
-        asm_datatype_back(&right_dtype);
+        asm_datatype_back(&right_dtype);    // 压入ecx寄存器到栈上,用于存储结果值
         asm_push_ins_pop("ecx", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value");
+        // 如果last_dtype标志包含DATATYPE_FLAG_IS_LITERAL，则再次压入数据类型
         if (last_dtype.flags & DATATYPE_FLAG_IS_LITERAL)
         {
             asm_datatype_back(&last_dtype);
@@ -1194,7 +1284,17 @@ void codegen_generate_exp_node_for_arithmetic(struct node* node, struct history*
         struct datatype left_dtype = datatype_for_numeric();
         asm_datatype_back(&left_dtype);
         asm_push_ins_pop("eax", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value");
-        #warning "pointer stuff"
+        struct datatype* pointer_datatype = datatype_thats_a_pointer(&left_dtype,&right_dtype);
+        if(pointer_datatype && datatype_size(datatype_pointer_reduce(pointer_datatype,1)) > DATA_SIZE_BYTE)
+        {
+            const char* res = "ecx";
+            if(pointer_datatype == &right_dtype)
+            {
+                res = "eax";
+            }
+            asm_push("imul %s, %i",res,datatype_size(datatype_pointer_reduce(pointer_datatype,1)));
+        }
+        // 调用codegen_gen_math_for_value生成实际的算术运算代码，使用eax和ecx寄存器
         codegen_gen_math_for_value("eax", "ecx", op_flags, last_dtype.flags & DATATYPE_FLAG_IS_SIGNED);
     }
 
