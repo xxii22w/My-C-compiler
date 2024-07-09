@@ -1,16 +1,9 @@
-struct dog
-{
-    int a;
-    int b;
-    int e;
-    char kk;
-};
-
-
 int main()
 {
-    struct dog a;
-    struct dog b;
-    a = b;
-
+    int x = 0;
+    for(x = 0;x < 50;x += 1)
+    {
+        continue;
+    }
+    return x;
 }

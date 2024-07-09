@@ -11,6 +11,14 @@ static struct node* current_function = NULL;
 
 enum
 {
+    CODEGEN_ENTITY_RULE_IS_STRUCT_OR_UNION_NON_POINTER = 0b00000001,
+    CODEGEN_ENTITY_RULE_IS_FUNCTION_CALL = 0b00000010,
+    CODEGEN_ENTITY_RULE_IS_GET_ADDRESS = 0b00000100,
+    CODEGEN_ENTITY_RULE_WILL_PEEK_AT_EBX = 0b00001000,
+};
+
+enum
+{
     RESPONSE_FLAG_ACKNOWLEDGEN = 0b00000001,
     RESPONSE_FLAG_PUSHED_STRUCTURE = 0b00000010,
     RESPONSE_FLAG_RESOLVED_ENTITY = 0b00000100,
@@ -119,6 +127,12 @@ const char* codegen_sub_register(const char* original_register,size_t size);
 void codegen_generate_entity_access_for_function_call(struct resolver_result* result,struct resolver_entity* entity);
 void codegen_generate_structure_push(struct resolver_entity* entity,struct history* history,int start_pos);
 void codegen_plus_or_minus_string_for_value(char* out, int val, size_t len);
+bool codegen_resolve_node_for_value(struct node* node,struct history* history);
+bool asm_datatype_back(struct datatype* dtype_out);
+void codegen_generate_entity_access_for_unary_get_address(struct resolver_result* result,struct resolver_entity* entity);
+void codegen_generate_expressionable(struct node *node, struct history *history);
+int codegen_label_count();
+void codegen_generate_body(struct node* node,struct history* history);
 
 void codegen_new_scope(int flags)
 {
@@ -244,6 +258,40 @@ void asm_pop_ebp()
 {
     asm_push_ins_pop("ebp",STACK_FRAME_ELEMENT_TYPE_SAVED_BP,"function_entry_saved_ebp");
 }
+
+int asm_push_ins_pop_or_ignore(const char* fmt, int expecting_stack_entity_type, const char* expecting_stack_entity_name, ...)
+{
+    if (!stackframe_back_expect(current_function, expecting_stack_entity_type, expecting_stack_entity_name))
+    {
+        return STACK_FRAME_ELEMENT_FLAG_ELEMENT_NOT_FOUND;
+    }
+
+    char tmp_buf[200];
+    sprintf(tmp_buf, "pop %s", fmt);
+    va_list args;
+    va_start(args, expecting_stack_entity_name);
+    asm_push_args(tmp_buf, args);
+    va_end(args);
+
+    struct stack_frame_element* element = stackframe_back(current_function);
+    int flags = element->flags;
+    stackframe_pop_expecting(current_function, expecting_stack_entity_type, expecting_stack_entity_name);
+    return flags;
+}
+
+void codegen_stack_add_no_compile_time_stack_frame_restore(size_t stack_size)
+{
+    if(stack_size != 0)
+    {
+        asm_push("add esp, %lld",stack_size);   // 将栈指针 esp 增加 stack_size 的值
+    }
+}
+
+void asm_pop_ebp_no_stack_frame_restore()
+{
+    asm_push("pop ebp");                        // 从栈中弹出一个值到基址寄存器 ebp
+}
+
 
 void codegen_stack_sub_with_name(size_t stack_size,const char* name)
 {
@@ -437,7 +485,7 @@ static const char* asm_keyword_for_size(size_t size, char* tmp_buf)
             break;
 
         default:
-            sprintf(tmp_buf, "times %lld db ", (unsigned long)size);
+            sprintf(tmp_buf, "times %lu db ", (unsigned long)size);
             return tmp_buf;
     }
 
@@ -590,10 +638,10 @@ void codegen_reduce_register(const char* reg,size_t size,bool is_signed)
 {
     if(size != DATA_SIZE_DWORD)
     {
-        const char* ins = "movsx";
+        const char* ins = "movsx";  // 这是一个汇编指令，用于有符号扩展
         if(!is_signed)
         {
-            ins = "movzx";
+            ins = "movzx";          // 用于无符号扩展
         }
         asm_push("%s eax, %s",codegen_sub_register("eax",size));
     }
@@ -601,6 +649,7 @@ void codegen_reduce_register(const char* reg,size_t size,bool is_signed)
 
 void codegen_gen_mem_access_get_address(struct node* node, int flags, struct resolver_entity* entity)
 {
+    // 该指令将一个内存地址加载到 ebx 寄存器
     asm_push("lea ebx, [%s]", codegen_entity_private(entity)->address);
     asm_push_ins_push_with_flags("ebx", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value", STACK_FRAME_ELEMENT_FLAG_IS_PUSHED_ADDRESS);
 }
@@ -612,7 +661,11 @@ void codegen_generate_structure_push_or_return(struct resolver_entity* entity, s
 
 void codegen_gen_mem_access(struct node* node, int flags, struct resolver_entity* entity)
 {
-    #warning "generate & address"
+    if(flags & EXPRESSION_GET_ADDRESS)
+    {
+        codegen_gen_mem_access_get_address(node,flags,entity);
+        return;
+    }
 
     if (datatype_is_struct_or_union_non_pointer(&entity->dtype))
     {
@@ -653,7 +706,94 @@ void codegen_generate_identifier(struct node *node, struct history *history)
     codegen_response_acknowledge(&(struct response){.flags = RESPONSE_FLAG_RESOLVED_ENTITY, .data.resolved_entity = entity});
 }
 
+void codegen_generate_unary_address(struct node* node,struct history* history)
+{
+    int flags = history->flags;
+    codegen_generate_expressionable(node->unary.operand,history_down(history,flags | EXPRESSION_GET_ADDRESS));
+    codegen_response_acknowledge(&(struct response){.flags=RESPONSE_FLAG_UNARY_GET_ADDRESS});
+}
 
+void codegen_generate_unary_indirection(struct node* node,struct history* history)
+{
+    const char* reg_to_use = "ebx";
+    int flags = history->flags;
+    codegen_response_expect();
+    codegen_generate_expressionable(node->unary.operand,history_down(history,flags | EXPRESSION_GET_ADDRESS | EXPRESSION_INDIRECTION));
+    struct response* res = codegen_response_pull();     // 从响应队列中获取响应，并断言响应包含实体
+    assert(codegen_response_has_entity(res));
+    struct datatype operand_datatype;
+    assert(asm_datatype_back(&operand_datatype));
+    asm_push_ins_pop(reg_to_use,STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE,"result_value");  // 将 operand_datatype 推入栈，并标记为 "result_value"
+
+    int depth = node->unary.indirection.depth;
+    int real_depth = depth;
+    if(!(history->flags & EXPRESSION_GET_ADDRESS))
+    {
+        depth++;
+    } 
+
+    // 根据 depth 循环生成 mov 指令，实现间接寻址
+    for(int i = 0;i < depth;i++)
+    {
+        asm_push("mov %s, [%s]",reg_to_use,reg_to_use);
+    }
+
+    // 如果 real_depth 等于操作数的数据类型指定的指针深度，则调用 codegen_reduce_register 调整寄存器大小
+    if(real_depth == res->data.resolved_entity->dtype.pointer_depth)
+    {
+        codegen_reduce_register(reg_to_use, datatype_size_no_ptr(&operand_datatype), operand_datatype.flags & DATATYPE_FLAG_IS_SIGNED);
+    }
+
+    asm_push_ins_push_with_data(reg_to_use, STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value", 0, &(struct stack_frame_data){.dtype=operand_datatype});
+    codegen_response_acknowledge(&(struct response){.flags=RESPONSE_FLAG_RESOLVED_ENTITY,.data.resolved_entity=res->data.resolved_entity});
+}
+
+void codegen_generate_normal_unary(struct node* node, struct history* history)
+{
+    codegen_generate_expressionable(node->unary.operand,history);
+
+    struct datatype last_dtype;
+    assert(asm_datatype_back(&last_dtype));
+
+    asm_push_ins_pop("eax",STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE,"result_value");
+
+    if(S_EQ(node->unary.op,"-"))
+    {
+        asm_push("neg eax");
+        asm_push_ins_push_with_data("eax", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value", 0, &(struct stack_frame_data){.dtype=last_dtype});
+    }
+    else if(S_EQ(node->unary.op,"~"))
+    {
+        asm_push("not eax");
+        asm_push_ins_push_with_data("eax", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value", 0, &(struct stack_frame_data){.dtype=last_dtype});
+    }
+    else if(S_EQ(node->unary.op,"*"))
+    {
+        codegen_generate_unary_indirection(node,history);
+    }
+}
+
+void codegen_generate_unary(struct node* node,struct history* history)
+{
+    int flags = history->flags;
+    if(codegen_resolve_node_for_value(node,history))
+    {
+        return;
+    }
+
+    if(op_is_indirection(node->unary.op))
+    {
+        codegen_generate_unary_indirection(node,history);
+        return;
+    }
+    else if(op_is_address(node->unary.op))
+    {
+        codegen_generate_unary_address(node,history);
+        return;
+    }
+
+    codegen_generate_normal_unary(node, history);
+}
 
 void codegen_generate_expressionable(struct node* node,struct history* history)
 {
@@ -673,6 +813,10 @@ void codegen_generate_expressionable(struct node* node,struct history* history)
             break;
         case NODE_TYPE_EXPRESSION:
             codegen_generate_exp_node(node,history);
+            break;
+
+        case NODE_TYPE_UNARY:
+            codegen_generate_unary(node, history);
             break;
     }
 }
@@ -841,6 +985,63 @@ void codegen_generate_entity_access_for_variable_or_general(struct resolver_resu
     asm_push_ins_push_with_data("ebx",STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE,"result_value",0,&(struct stack_frame_data){.dtype=entity->dtype});
 }
 
+int codegen_entity_rules(struct resolver_entity* last_entity,struct history* history)
+{
+    int rule_flags = 0;
+    if(!last_entity)
+    {
+        return 0;
+    }
+
+    if(datatype_is_struct_or_union_non_pointer(&last_entity->dtype))
+    {
+        rule_flags |= CODEGEN_ENTITY_RULE_IS_STRUCT_OR_UNION_NON_POINTER;
+    }
+
+    if (last_entity->type == RESOLVER_ENTITY_TYPE_FUNCTION_CALL)
+    {
+        rule_flags |= CODEGEN_ENTITY_RULE_IS_FUNCTION_CALL;
+    }
+    else if(history->flags & EXPRESSION_GET_ADDRESS)
+    {
+        rule_flags |= CODEGEN_ENTITY_RULE_IS_GET_ADDRESS;
+    }
+    else if(last_entity->type == RESOLVER_ENTITY_TYPE_UNARY_GET_ADDRESS)
+    {
+        rule_flags |= CODEGEN_ENTITY_RULE_IS_GET_ADDRESS;
+    }
+    else
+    {
+        rule_flags |= CODEGEN_ENTITY_RULE_WILL_PEEK_AT_EBX;
+    }
+
+    return rule_flags;
+}
+
+void codegen_apply_unary_access(int depth)
+{
+    for(int i = 0;i < depth;i++)
+    {
+        // 这条指令将 ebx 寄存器中的内容（即内存地址）所指向的值移动到 ebx 寄存器中，实现一次间接寻址
+        asm_push("mov ebx, [ebx]");
+    }
+}
+
+void codegen_generate_entity_access_for_unary_indirection_for_assignment_left_operand(struct resolver_result* result, struct resolver_entity* entity, struct history* history)
+{
+    asm_push("; INDIRECTION");
+    int flags = asm_push_ins_pop("ebx",STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE,"result_value");
+    int gen_entity_rules = codegen_entity_rules(result->last_entity,history);
+    int depth = entity->indirection.depth - 1;
+    codegen_apply_unary_access(depth);
+    asm_push_ins_push_with_flags("ebx",STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE,"result_value",STACK_FRAME_ELEMENT_FLAG_IS_PUSHED_ADDRESS);
+}
+
+void codegen_generate_entity_access_for_unsupported(struct resolver_result* result, struct resolver_entity* entity)
+{
+    codegen_generate_expressionable(entity->node, history_begin(0));
+}
+
 void codegen_generate_entity_access_for_entity_for_assignment_left_operand(struct resolver_result* result, struct resolver_entity* entity, struct history* history)
 {
     switch (entity->type)
@@ -858,15 +1059,15 @@ void codegen_generate_entity_access_for_entity_for_assignment_left_operand(struc
         break;
     
     case RESOLVER_ENTITY_TYPE_UNARY_INDIRECTION:
-        #warning "unary indirection"
+        codegen_generate_entity_access_for_unary_indirection_for_assignment_left_operand(result,entity,history);
         break;
 
     case RESOLVER_ENTITY_TYPE_UNARY_GET_ADDRESS:
-        #warning "unary get address"
+        codegen_generate_entity_access_for_unary_get_address(result,entity);
         break;
 
     case RESOLVER_ENTITY_TYPE_UNSUPPORTED:
-        #warning "unsupported"
+        codegen_generate_entity_access_for_unsupported(result, entity);
         break;
     
     case RESOLVER_ENTITY_TYPE_CAST:
@@ -989,6 +1190,26 @@ void codegen_generate_entity_access_for_function_call(struct resolver_result* re
     }
 }
 
+void codegen_generate_entity_access_for_unary_indirection(struct resolver_result* result,struct resolver_entity* entity,struct history* history)
+{
+    asm_push("; INDIRECTION");
+    struct datatype operand_datatype;
+    assert(asm_datatype_back(&operand_datatype));
+
+    int flags = asm_push_ins_pop("ebx",STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE,"result_value");
+    int gen_entity_rules = codegen_entity_rules(result->last_entity,history);
+    int depth = entity->indirection.depth;
+    codegen_apply_unary_access(depth);
+    asm_push_ins_push_with_data("ebx", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value", STACK_FRAME_ELEMENT_FLAG_IS_PUSHED_ADDRESS, &(struct stack_frame_data){.dtype=operand_datatype});
+}
+
+void codegen_generate_entity_access_for_unary_get_address(struct resolver_result* result,struct resolver_entity* entity)
+{
+    asm_push_ins_pop("ebx",STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE,"result_value");
+    asm_push("; PUSH ADDRESS &");
+    asm_push_ins_push_with_data("ebx",STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE,"result_value",0,&(struct stack_frame_data){.dtype=entity->dtype});
+}
+
 void codegen_generate_entity_access_for_entity(struct resolver_result* result,struct resolver_entity* entity,struct history* history)
 {
     switch (entity->type)
@@ -1007,11 +1228,11 @@ void codegen_generate_entity_access_for_entity(struct resolver_result* result,st
             break;
         
         case RESOLVER_ENTITY_TYPE_UNARY_INDIRECTION:
-            #warning "unary indirection"
+            codegen_generate_entity_access_for_unary_indirection(result,entity,history);
             break;
         
         case RESOLVER_ENTITY_TYPE_UNSUPPORTED:
-            #warning "unsupported"
+            codegen_generate_entity_access_for_unsupported(result, entity);
             break;
         
         case RESOLVER_ENTITY_TYPE_CAST:
@@ -1063,7 +1284,26 @@ bool codegen_resolve_node_for_value(struct node *node, struct history *history)
         return false;
     }
 
-    #warning "MORE TO GO FOR RESOLVING NODE VALUE"
+    struct datatype dtype;
+    assert(asm_datatype_back(&dtype));
+    if(datatype_is_struct_or_union_non_pointer(&dtype))
+    {
+        codegen_generate_structure_push(result->last_entity,history,0);
+    }
+    else if(!(dtype.flags & DATATYPE_FLAG_IS_POINTER))
+    {
+        // 生成汇编代码，将值弹出到 eax 寄存器，并标记为栈帧中的一个值
+        asm_push_ins_pop("eax",STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE,"result_value");
+        // 检查结果标志，确定是否需要进行最终的间接寻址
+        if(result->flags & RESOLVER_RESULT_FLAG_FINAL_INDIRECTION_REQUIRED_FOR_VALUE)
+        {
+            // 如果需要最终的间接寻址，生成汇编代码，将 eax 寄存器指向的地址的值移动到 eax
+            asm_push("mov eax, [eax]");
+        }
+
+        codegen_reduce_register("eax",datatype_element_size(&dtype),dtype.flags & DATATYPE_FLAG_IS_SIGNED);
+        asm_push_ins_push_with_data("eax",STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE,"result_value",0,&(struct stack_frame_data){.dtype=dtype});
+    }
 
     return true;
 }
@@ -1496,6 +1736,189 @@ void codegen_generate_structure_push(struct resolver_entity* entity, struct hist
     codegen_response_acknowledge(RESPONSE_SET(.flags=RESPONSE_FLAG_PUSHED_STRUCTURE));
 }
 
+void _codegen_generate_if_stmt(struct node* node, int end_label_id);
+
+void codegen_generate_else_stmt(struct node* node)
+{
+    codegen_generate_body(node->stmt.else_stmt.body_node, history_begin(0));
+}
+
+void codegen_generate_else_or_else_if(struct node* node, int end_label_id)
+{
+    if (node->type == NODE_TYPE_STATEMENT_IF)
+    {
+        _codegen_generate_if_stmt(node, end_label_id);
+    }
+    else if(node->type == NODE_TYPE_STATEMENT_ELSE)
+    {
+        codegen_generate_else_stmt(node);
+    }
+    else
+    {
+        compiler_error(current_process, "Unexpected keyword compiler bug");
+    }
+}
+
+void _codegen_generate_if_stmt(struct node* node, int end_label_id)
+{
+    int if_label_id = codegen_label_count();
+    // 生成if语句的条件表达式的代码，并等待结果
+    codegen_generate_expressionable(node->stmt.if_stmt.cond_node,history_begin(0));
+    asm_push_ins_pop("eax", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value"); 
+    asm_push("cmp eax, 0");                         // 将eax寄存器的值与0比较，用于评估条件真假
+    asm_push("je .if_%i", if_label_id);             // 如果条件为假（即eax等于0），则跳转到if语句的末尾
+    codegen_generate_body(node->stmt.if_stmt.body_node, history_begin(IS_ALONE_STATEMENT)); // 如果条件为真，生成if语句体内的代码
+    asm_push("jmp .if_end_%i", end_label_id);       // 不管if语句体的执行结果如何，都跳转到整个if语句的末尾
+    asm_push(".if_%i:", if_label_id);               // 定义if语句的条件跳转目标位置
+
+    // 如果存在else或else if语句，递归调用相应的代码生成函数
+    if (node->stmt.if_stmt.next)
+    {
+        codegen_generate_else_or_else_if(node->stmt.if_stmt.next, end_label_id);
+    }
+}
+
+void codegen_generate_if_stmt(struct node* node)
+{
+    int end_label_id = codegen_label_count();
+    _codegen_generate_if_stmt(node, end_label_id);
+    asm_push(".if_end_%i:", end_label_id);
+}
+
+
+
+void codegen_generate_statement_return_exp(struct node* node)
+{
+    codegen_response_expect();
+    codegen_generate_expressionable(node->stmt.return_stmt.exp, history_begin(IS_STATEMENT_RETURN));
+    struct datatype dtype;
+    assert(asm_datatype_back(&dtype));
+    if (datatype_is_struct_or_union_non_pointer(&dtype))
+    {
+        asm_push("mov edx, [ebp+8]");                       // 将函数的返回地址（可能是在 ebp+8）移动到 edx 的汇编指令
+        codegen_generate_move_struct(&dtype, "edx", 0);     // 来处理结构体的移动
+        asm_push("mov eax, [ebp+8]");                       // 将返回地址移动到 eax 的汇编指令
+        return;
+    }
+
+    asm_push_ins_pop("eax", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value");
+}
+
+void codegen_generate_statement_return(struct node* node)
+{
+    if (node->stmt.return_stmt.exp)
+    {
+        codegen_generate_statement_return_exp(node);
+    }
+
+    // 调整栈大小，这里使用 C_ALIGN 对齐函数的栈大小
+    codegen_stack_add_no_compile_time_stack_frame_restore(C_ALIGN(function_node_stack_size(node->binded.function)));
+    // 恢复基址指针 ebp
+    asm_pop_ebp_no_stack_frame_restore();
+    asm_push("ret");
+}
+
+void codegen_generate_while_stmt(struct node* node)
+{
+    codegen_begin_entry_exit_point();
+    // 生成唯一的标签ID用于while循环的开始和结束
+    int while_start_id = codegen_label_count();
+    int while_end_id = codegen_label_count();
+    // 定义while循环开始的位置
+    asm_push(".while_start_%i:",while_start_id);
+    codegen_generate_expressionable(node->stmt.while_stmt.exp_node,history_begin(0));
+    asm_push_ins_pop("eax",STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE,"result_value");
+    // 将eax寄存器的值与0比较，用于评估循环是否继续
+    asm_push("cmp eax, 0");
+    // 如果条件为假（即eax等于0），则跳转到while循环的结束位置
+    asm_push("je .while_end_%i", while_end_id);
+    codegen_generate_body(node->stmt.while_stmt.body_node, history_begin(IS_ALONE_STATEMENT));
+    // 无条件跳转回while循环开始的位置，形成循环
+    asm_push("jmp .while_start_%i", while_start_id);
+    // 定义while循环结束的位置
+    asm_push(".while_end_%i:", while_end_id);
+    codegen_end_entry_exit_point();
+}
+
+void codegen_generate_do_while_stmt(struct node* node)
+{
+    codegen_begin_entry_exit_point();
+    int do_while_start_id = codegen_label_count();
+    asm_push(".do_while_start_%i:", do_while_start_id);
+    codegen_generate_body(node->stmt.do_while_stmt.body_node, history_begin(IS_ALONE_STATEMENT));
+    codegen_generate_expressionable(node->stmt.do_while_stmt.exp_node, history_begin(0));
+    asm_push_ins_pop("eax", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value");
+    asm_push("cmp eax, 0");
+    asm_push("jne .do_while_start_%i", do_while_start_id);
+    codegen_end_entry_exit_point();
+}
+
+
+void codegen_generate_for_stmt(struct node* node)
+{
+    struct for_stmt* for_stmt = &node->stmt.for_stmt;
+    int for_loop_start_id = codegen_label_count();
+    int for_loop_end_id = codegen_label_count();
+    // 如果存在初始化节点，生成其代码
+    if (for_stmt->init_node)
+    {
+        codegen_generate_expressionable(for_stmt->init_node, history_begin(0));
+        asm_push_ins_pop_or_ignore("eax", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value");
+    }
+
+    // 生成跳转到循环开始的汇编指令，绕过初始化之后的迭代和条件判断
+    asm_push("jmp .for_loop%i", for_loop_start_id);
+    codegen_begin_entry_exit_point();
+    if (for_stmt->loop_node)
+    {
+        codegen_generate_expressionable(for_stmt->loop_node, history_begin(0));
+        asm_push_ins_pop_or_ignore("eax", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value");
+    }
+
+    // 定义for循环开始的标签位置
+    asm_push(".for_loop%i:", for_loop_start_id);
+    if (for_stmt->cond_node)
+    {
+        codegen_generate_expressionable(for_stmt->cond_node, history_begin(0));
+        // 将结果推入栈或忽略
+        asm_push_ins_pop_or_ignore("eax", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value");
+        // 将eax寄存器的值与0比较，用于评估循环是否继续
+        asm_push("cmp eax, 0");
+        // 如果条件为假（即eax等于0），则跳转到for循环的结束位置
+        asm_push("je .for_loop_end%i", for_loop_end_id);
+
+    }
+
+    if (for_stmt->body_node)
+    {
+        codegen_generate_body(for_stmt->body_node, history_begin(IS_ALONE_STATEMENT));
+    }
+
+    // 如果存在迭代节点，生成其代码
+    if (for_stmt->loop_node)
+    {
+        codegen_generate_expressionable(for_stmt->loop_node, history_begin(0));
+        asm_push_ins_pop_or_ignore("eax", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value");
+    }
+
+    // 无条件跳转回for循环开始的位置，形成循环
+    asm_push("jmp .for_loop%i", for_loop_start_id);
+    // 定义for循环结束的位置
+    asm_push(".for_loop_end%i:", for_loop_end_id);
+
+    codegen_end_entry_exit_point();
+}
+
+void codegen_generate_continue_stmt(struct node* node)
+{
+    codegen_goto_entry_point(node);
+}
+
+void codegen_generate_break_stmt(struct node* node)
+{
+    codegen_goto_exit_point(node);
+}
+
 void codegen_generate_statement(struct node* node, struct history* history)
 {
     switch(node->type)
@@ -1503,9 +1926,42 @@ void codegen_generate_statement(struct node* node, struct history* history)
         case NODE_TYPE_EXPRESSION:
             codegen_generate_exp_node(node,history_begin(history->flags));
             break;
+        
+        case NODE_TYPE_UNARY:
+            codegen_generate_unary(node, history_begin(history->flags));
+            break;
+
         case NODE_TYPE_VARIABLE:
             codegen_generate_scope_variable(node);
-        break;
+            break;
+
+        case NODE_TYPE_STATEMENT_IF:
+            codegen_generate_if_stmt(node);
+            break;
+
+        case NODE_TYPE_STATEMENT_RETURN:
+            codegen_generate_statement_return(node);
+            break;
+
+        case NODE_TYPE_STATEMENT_WHILE:
+            codegen_generate_while_stmt(node);
+            break;
+
+        case NODE_TYPE_STATEMENT_DO_WHILE:
+            codegen_generate_do_while_stmt(node);
+            break;
+
+        case NODE_TYPE_STATEMENT_FOR:
+            codegen_generate_for_stmt(node);
+            break;
+
+        case NODE_TYPE_STATEMENT_BREAK:
+            codegen_generate_break_stmt(node);
+            break;
+
+        case NODE_TYPE_STATEMENT_CONTINUE:
+            codegen_generate_continue_stmt(node);
+            break;
     }
 
     codegen_discard_unused_stack();
