@@ -363,13 +363,14 @@ const char* codegen_register_string(const char* str)
     return str_elem->label;
 }
 
-struct code_generator* codegenerator_new(struct compile_process* process)
+struct code_generator *codegenerator_new(struct compile_process *process)
 {
     struct code_generator *generator = calloc(1, sizeof(struct code_generator));
     generator->string_table = vector_create(sizeof(struct string_table_element *));
     generator->entry_points = vector_create(sizeof(struct codegen_entry_point *));
     generator->exit_points = vector_create(sizeof(struct codegen_exit_point *));
-    generator->responses = vector_create(sizeof(struct response*));
+    generator->responses = vector_create(sizeof(struct response *));
+    generator->_switch.swtiches = vector_create(sizeof(struct generator_switch_stmt_entity));
     return generator;
 }
 
@@ -414,6 +415,13 @@ void codegen_goto_exit_point(struct node* node)
     struct code_generator* gen = current_process->generator;
     struct codegen_exit_point* exit_point = codegen_current_exit_point();
     asm_push("jmp .exit_point_%i", exit_point->id);
+}
+
+void codegen_goto_exit_point_maintain_stack(struct node* node)
+{
+    struct code_generator* gen = current_process->generator;
+    struct codegen_exit_point* exit_point = codegen_current_exit_point();
+    asm_push("jmp .exit_point_%i",exit_point->id);
 }
 
 void codegen_register_entry_point(int entry_point_id)
@@ -463,6 +471,47 @@ void codegen_end_entry_exit_point()
 {
     codegen_end_entry_point();
     codegen_end_exit_point();
+}
+
+void codegen_begin_switch_statement()
+{
+    struct code_generator* generator = current_process->generator;
+    struct generator_switch_stmt* switch_stmt_data = &generator->_switch;
+    vector_push(switch_stmt_data->swtiches, &switch_stmt_data->current);
+    memset(&switch_stmt_data->current, 0, sizeof(struct generator_switch_stmt_entity));
+    int switch_stmt_id = codegen_label_count();
+    asm_push(".switch_stmt_%i:", switch_stmt_id);
+    switch_stmt_data->current.id = switch_stmt_id;
+}
+
+void codegen_end_switch_statement()
+{
+    struct code_generator* generator = current_process->generator;
+    struct generator_switch_stmt* switch_stmt_data = &generator->_switch;
+    asm_push(".switch_stmt_%i_end:",switch_stmt_data->current.id);
+    // 让我们恢复旧的 switch 语句
+    memcpy(&switch_stmt_data->current, vector_back(switch_stmt_data->swtiches), sizeof(struct generator_switch_stmt_entity));
+    vector_pop(switch_stmt_data->swtiches);
+
+}
+
+int codegen_switch_id()
+{
+    struct code_generator* generator = current_process->generator;
+    struct generator_switch_stmt* switch_stmt_data = &generator->_switch;
+    return switch_stmt_data->current.id;
+}
+
+void codegen_begin_case_statement(int index)
+{
+    struct code_generator* generator = current_process->generator;
+    struct generator_switch_stmt* switch_stmt_data = &generator->_switch;
+    asm_push(".switch_stmt_%i_case_%i:", switch_stmt_data->current.id, index);
+}
+
+void codegen_end_case_statement()
+{
+    // Do nothing.
 }
 
 static const char* asm_keyword_for_size(size_t size, char* tmp_buf)
@@ -1909,9 +1958,64 @@ void codegen_generate_for_stmt(struct node* node)
     codegen_end_entry_exit_point();
 }
 
+void codegen_generate_switch_default_stmt(struct node* node)
+{
+    asm_push("; DEFAULT CASE");
+    struct code_generator* generator = current_process->generator;
+    struct generator_switch_stmt* switch_stmt_data = &generator->_switch;
+    asm_push(".switch_stmt_%i_case_default:",switch_stmt_data->current.id);
+}
+
+void codegen_generate_switch_stmt_case_jumps(struct node* node)
+{
+    vector_set_peek_pointer(node->stmt.switch_stmt.cases,0);
+    struct parsed_switch_case* switch_case = vector_peek(node->stmt.switch_stmt.cases);
+    while(switch_case)
+    {
+        // 为每个case生成比较指令，将eax寄存器的值与case的索引比较
+        asm_push("cmp eax, %i",switch_case->index);
+        // 如果eax等于当前case的索引，则跳转到该case的代码位置
+        asm_push("je .switch_stmt_%i_case_%i",codegen_switch_id(),switch_case->index);
+        switch_case = vector_peek(node->stmt.switch_stmt.cases);
+    }
+
+    // 如果switch语句包含default情况，则生成跳转到default的指令
+    if(node->stmt.switch_stmt.has_default_case)
+    {
+        asm_push("jmp .switch_stmt_%i_case_default",codegen_switch_id);
+    }
+
+    codegen_goto_exit_point_maintain_stack(node);
+}
+
+void codegen_generate_switch_stmt(struct node* node)
+{
+    codegen_begin_entry_exit_point();
+    codegen_begin_switch_statement();
+
+    codegen_generate_expressionable(node->stmt.switch_stmt.exp, history_begin(0));
+    asm_push_ins_pop_or_ignore("eax", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value");
+    // 生成switch语句的case跳转指令
+    codegen_generate_switch_stmt_case_jumps(node);
+
+    codegen_generate_body(node->stmt.switch_stmt.body, history_begin(IS_ALONE_STATEMENT));
+    codegen_end_switch_statement();
+    codegen_end_entry_exit_point();
+}
+
+
 void codegen_generate_continue_stmt(struct node* node)
 {
     codegen_goto_entry_point(node);
+}
+
+void codegen_generate_switch_case_stmt(struct node* node)
+{
+    struct node* case_stmt_exp = node->stmt._case.exp;
+    assert(case_stmt_exp->type == NODE_TYPE_NUMBER);
+    codegen_begin_case_statement(case_stmt_exp->llnum);
+    asm_push("; CASE %i", case_stmt_exp->llnum);
+    codegen_end_case_statement();
 }
 
 void codegen_generate_break_stmt(struct node* node)
@@ -1961,6 +2065,18 @@ void codegen_generate_statement(struct node* node, struct history* history)
 
         case NODE_TYPE_STATEMENT_CONTINUE:
             codegen_generate_continue_stmt(node);
+            break;
+
+        case NODE_TYPE_STATEMENT_SWITCH:
+            codegen_generate_switch_stmt(node);
+            break;
+        
+        case NODE_TYPE_STATEMENT_CASE:
+            codegen_generate_switch_case_stmt(node);
+            break;
+
+        case NODE_TYPE_STATEMENT_DEFAULT:
+            codegen_generate_switch_default_stmt(node);
             break;
     }
 
