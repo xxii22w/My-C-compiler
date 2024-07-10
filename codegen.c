@@ -133,6 +133,7 @@ void codegen_generate_entity_access_for_unary_get_address(struct resolver_result
 void codegen_generate_expressionable(struct node *node, struct history *history);
 int codegen_label_count();
 void codegen_generate_body(struct node* node,struct history* history);
+int codegen_remove_uninheritable_flags(int flags);
 
 void codegen_new_scope(int flags)
 {
@@ -692,7 +693,7 @@ void codegen_reduce_register(const char* reg,size_t size,bool is_signed)
         {
             ins = "movzx";          // 用于无符号扩展
         }
-        asm_push("%s eax, %s",codegen_sub_register("eax",size));
+        asm_push("%s eax, %s", ins, codegen_sub_register("eax", size));
     }
 }
 
@@ -864,6 +865,42 @@ void codegen_generate_exp_parenthesis_node(struct node* node,struct history* his
     codegen_generate_expressionable(node->parenthesis.exp,history_down(history,codegen_remove_uninheritable_flags(history->flags)));
 }
 
+void codegen_generate_tenary(struct node* node, struct history* history)
+{
+    int true_label_id = codegen_label_count();
+    int false_label_id = codegen_label_count();
+    int tenary_end_label_id = codegen_label_count();
+
+    struct datatype last_type;
+    assert(asm_datatype_back(&last_type));
+    asm_push_ins_pop("eax", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value");
+    asm_push("cmp eax, 0");                             // 将eax寄存器的值与0比较，以评估条件真假
+    asm_push("je .tenary_false_%i", false_label_id);    // 如果条件为假（即eax等于0），跳转到假值部分
+    asm_push(".tenary_true_%i:", true_label_id);        // 定义真值部分的标签
+
+    codegen_generate_expressionable(node->tenary.true_node,history_down(history,0));
+    asm_push_ins_pop_or_ignore("eax",STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE,"result_value");
+    asm_push("jmp .tenary_end_%i",tenary_end_label_id); // 跳转到三元运算符的结束部分
+
+    asm_push(".tenary_false_%i:", false_label_id);      // 定义假值部分的标签
+    codegen_generate_expressionable(node->tenary.false_node, history_down(history, 0));
+    asm_push_ins_pop_or_ignore("eax", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value");
+    asm_push(".tenary_end_%i:", tenary_end_label_id);   // 定义三元运算符结束部分的标签
+}
+
+void codegen_generate_cast(struct node* node,struct history* history)
+{
+    if(!codegen_resolve_node_for_value(node,history))
+    {
+        codegen_generate_expressionable(node->cast.operand,history);
+    }
+
+    asm_push_ins_pop("eax",STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE,"result_value");
+    // 根据目标数据类型的尺寸和符号属性，调整eax寄存器中的值
+    codegen_reduce_register("eax",datatype_size(&node->cast.dtype),node->cast.dtype.flags & DATATYPE_FLAG_IS_SIGNED);
+    asm_push_ins_push_with_data("eax",STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE,"result_value",0,&(struct stack_frame_data){.dtype=node->cast.dtype});
+}
+
 void codegen_generate_expressionable(struct node* node,struct history* history)
 {
     bool is_root = codegen_is_exp_root(history);
@@ -895,6 +932,14 @@ void codegen_generate_expressionable(struct node* node,struct history* history)
 
         case NODE_TYPE_UNARY:
             codegen_generate_unary(node, history);
+            break;
+
+        case NODE_TYPE_TENARY:
+            codegen_generate_tenary(node, history);
+            break;
+
+        case NODE_TYPE_CAST:
+            codegen_generate_cast(node, history);
             break;
     }
 }
@@ -1120,12 +1165,60 @@ void codegen_generate_entity_access_for_unsupported(struct resolver_result* resu
     codegen_generate_expressionable(entity->node, history_begin(0));
 }
 
+void codegen_generate_entity_access_for_cast(struct resolver_result* result, struct resolver_entity* entity)
+{
+    asm_push("; CAST");
+}
+
+void codegen_generate_entity_access_array_bracket_pointer(struct resolver_result* result,struct resolver_entity* entity)
+{
+    asm_push_ins_pop("ebx", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value");
+    codegen_generate_expressionable(entity->array.array_index_node, history_begin(0));
+    asm_push_ins_pop("eax", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value");
+    // 如果数组元素大小大于1字节，则将索引乘以数组元素大小
+    if (datatype_element_size(&entity->dtype) > DATA_SIZE_BYTE)
+    {
+        asm_push("imul eax, %i", datatype_size_for_array_access(&entity->dtype));
+    }
+    // 将ebx寄存器的值（基地址）和eax寄存器的值（索引 * 元素大小）相加，得到最终地址
+    asm_push("add ebx, eax");
+    asm_push_ins_push_with_data("ebx", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value", 0, &(struct stack_frame_data){.dtype=entity->dtype});
+}
+
+void codegen_generate_entity_access_array_bracket(struct resolver_result* result, struct resolver_entity* entity)
+{
+    // 如果访问的是指针类型的数组实体，则调用处理指针数组的函数
+    if (entity->flags & RESOLVER_ENTITY_FLAG_IS_POINTER_ARRAY_ENTITY)
+    {
+        codegen_generate_entity_access_array_bracket_pointer(result, entity);
+        return;
+    }
+
+    asm_push_ins_pop("ebx", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value");
+    codegen_generate_expressionable(entity->array.array_index_node, history_begin(0));
+    asm_push_ins_pop("eax", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value");
+
+    // 如果标记指示直接使用偏移量，则将偏移量加到ebx
+    if (entity->flags  & RESOLVER_ENTITY_FLAG_JUST_USE_OFFSET)
+    {
+        asm_push("add ebx, %i", entity->offset);
+    }
+    else
+    {
+        // 否则，将索引乘以偏移量，然后加到ebx
+        asm_push("imul eax, %i", entity->offset);
+        asm_push("add ebx, eax");
+    }
+
+    asm_push_ins_push_with_data("ebx", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value", 0, &(struct stack_frame_data){.dtype=entity->dtype}); 
+}
+
 void codegen_generate_entity_access_for_entity_for_assignment_left_operand(struct resolver_result* result, struct resolver_entity* entity, struct history* history)
 {
     switch (entity->type)
     {
     case RESOLVER_ENTITY_TYPE_ARRAY_BRACKET:
-        #warning "todo implement array bracket"
+        codegen_generate_entity_access_array_bracket(result, entity);
         break;
     case RESOLVER_ENTITY_TYPE_VARIABLE:
     case RESOLVER_ENTITY_TYPE_GENERAL:
@@ -1149,7 +1242,7 @@ void codegen_generate_entity_access_for_entity_for_assignment_left_operand(struc
         break;
     
     case RESOLVER_ENTITY_TYPE_CAST:
-        #warning "cast"
+        codegen_generate_entity_access_for_cast(result, entity);
         break;
     
     default:
@@ -1293,7 +1386,7 @@ void codegen_generate_entity_access_for_entity(struct resolver_result* result,st
     switch (entity->type)
     {
         case RESOLVER_ENTITY_TYPE_ARRAY_BRACKET:
-            #warning "todo implement array bracket"
+            codegen_generate_entity_access_array_bracket(result, entity);
             break;
 
         case RESOLVER_ENTITY_TYPE_VARIABLE:
@@ -1314,7 +1407,7 @@ void codegen_generate_entity_access_for_entity(struct resolver_result* result,st
             break;
         
         case RESOLVER_ENTITY_TYPE_CAST:
-            #warning "cast"
+            codegen_generate_entity_access_for_cast(result, entity);
             break;
         
         default:
