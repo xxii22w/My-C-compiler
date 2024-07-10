@@ -844,6 +844,26 @@ void codegen_generate_unary(struct node* node,struct history* history)
     codegen_generate_normal_unary(node, history);
 }
 
+void codegen_gen_mov_for_value(const char* reg,const char* value,const char* datatype,int flags)
+{
+    // 生成一条汇编指令，将值（可能是立即数、寄存器或内存地址）移动到指定的寄存器
+    asm_push("mov %s, %s",reg,value);
+}
+
+void codegen_generate_string(struct node* node,struct history* history)
+{
+    const char* label = codegen_register_string(node->sval);
+    // 使用上一个函数生成将字符串地址移动到eax寄存器的汇编指令
+    codegen_gen_mov_for_value("eax",label,"dword",history->flags);
+    // 生成汇编指令，将eax寄存器的值（即字符串的地址）推入栈，并标记为字符串数据类型
+    asm_push_ins_push_with_data("eax",STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE,"result_value",0,&(struct stack_frame_data){.dtype=datatype_for_string()});
+}
+
+void codegen_generate_exp_parenthesis_node(struct node* node,struct history* history)
+{
+    codegen_generate_expressionable(node->parenthesis.exp,history_down(history,codegen_remove_uninheritable_flags(history->flags)));
+}
+
 void codegen_generate_expressionable(struct node* node,struct history* history)
 {
     bool is_root = codegen_is_exp_root(history);
@@ -860,8 +880,17 @@ void codegen_generate_expressionable(struct node* node,struct history* history)
         case NODE_TYPE_NUMBER:
             codegen_generate_number_node(node,history);
             break;
+
+        case NODE_TYPE_STRING:
+            codegen_generate_string(node, history);
+            break;
+
         case NODE_TYPE_EXPRESSION:
             codegen_generate_exp_node(node,history);
+            break;
+
+        case NODE_TYPE_EXPRESSION_PARENTHESES:
+            codegen_generate_exp_parenthesis_node(node, history);
             break;
 
         case NODE_TYPE_UNARY:
@@ -2023,6 +2052,16 @@ void codegen_generate_break_stmt(struct node* node)
     codegen_goto_exit_point(node);
 }
 
+void codegen_generate_goto_stmt(struct node* node)
+{
+    asm_push("jmp label_%s", node->stmt._goto.label->sval);
+}
+
+void codegen_generate_label(struct node* node)
+{
+    asm_push("label_%s:",node->label.name->sval);
+}
+
 void codegen_generate_statement(struct node* node, struct history* history)
 {
     switch(node->type)
@@ -2077,6 +2116,14 @@ void codegen_generate_statement(struct node* node, struct history* history)
 
         case NODE_TYPE_STATEMENT_DEFAULT:
             codegen_generate_switch_default_stmt(node);
+            break;
+
+        case NODE_TYPE_STATEMENT_GOTO:
+            codegen_generate_goto_stmt(node);
+            break;
+        
+        case NODE_TYPE_LABEL:
+            codegen_generate_label(node);
             break;
     }
 
