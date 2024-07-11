@@ -18,6 +18,8 @@ bool lex_is_in_expression();
 static struct lex_process *lex_process;
 static struct token tmp_token;
 
+char lex_get_escaped_char(char c);
+
 static char peekc()
 {
     return lex_process->function->peek_char(lex_process);
@@ -132,6 +134,31 @@ struct token *token_make_number()
     return token_make_number_for_value(read_number());
 }
 
+static void lex_handle_escape_number(struct buffer* buf)
+{
+    long long number = read_number();
+    if(number > 255)
+    {
+        compiler_error(lex_process->compiler, "Characters must be 0-255 wide chars are not yet supported\n");
+    }
+
+    buffer_write(buf,number);
+}
+
+static void lex_handle_escape(struct buffer* buf)
+{
+    char c = peekc();
+    if(isdigit(c))
+    {
+        lex_handle_escape_number(buf);
+        return;
+    }
+
+    char co = lex_get_escaped_char(c);
+    buffer_write(buf,co);
+    nextc();
+}
+
 static struct token *token_make_string(char start_delim, char end_delim)
 {
     struct buffer *buf = buffer_create();
@@ -191,6 +218,8 @@ bool op_valid(const char *op)
            S_EQ(op, "-=") ||
            S_EQ(op, "*=") ||
            S_EQ(op, "/=") ||
+           S_EQ(op, ">>=") ||
+           S_EQ(op, "<<=") ||
            S_EQ(op, ">>") ||
            S_EQ(op, "<<") ||
            S_EQ(op, ">=") ||
@@ -237,14 +266,25 @@ const char *read_op()
     struct buffer *buffer = buffer_create();
     buffer_write(buffer, op);
 
-    if (!op_treated_as_one(op))
+    if(op == "*" && peekc() == '=')
     {
-        op = peekc();
-        if (is_single_operator(op))
+        // *= 因此，* 可能是一个单一运算符，但我们将给它一个特殊的使用情况
+        buffer_write(buffer, peekc());
+        // 跳过"="，因为我们刚刚偷看过
+        nextc();
+        single_operator = false;
+    }
+    else if(!op_treated_as_one(op))
+    {
+        for (int i = 0; i < 2; i++)
         {
-            buffer_write(buffer, op);
-            nextc();
-            single_operator = false;
+            op = peekc();
+            if (is_single_operator(op))
+            {
+                buffer_write(buffer, op);
+                nextc();
+                single_operator = false;
+            }
         }
     }
 

@@ -134,6 +134,7 @@ void codegen_generate_expressionable(struct node *node, struct history *history)
 int codegen_label_count();
 void codegen_generate_body(struct node* node,struct history* history);
 int codegen_remove_uninheritable_flags(int flags);
+void codegen_generate_assignment_part(struct node* node,const char* op,struct history* history);
 
 void codegen_new_scope(int flags)
 {
@@ -280,6 +281,15 @@ int asm_push_ins_pop_or_ignore(const char* fmt, int expecting_stack_entity_type,
     return flags;
 }
 
+void codegen_data_section_add(const char* data,...)
+{
+    va_list args;
+    va_start(args,data);
+    char* new_data = malloc(256);
+    vsprintf(new_data,data,args);
+    vector_push(current_process->generator->custom_data_section,&new_data);
+}
+
 void codegen_stack_add_no_compile_time_stack_frame_restore(size_t stack_size)
 {
     if(stack_size != 0)
@@ -372,6 +382,7 @@ struct code_generator *codegenerator_new(struct compile_process *process)
     generator->exit_points = vector_create(sizeof(struct codegen_exit_point *));
     generator->responses = vector_create(sizeof(struct response *));
     generator->_switch.swtiches = vector_create(sizeof(struct generator_switch_stmt_entity));
+    generator->custom_data_section = vector_create(sizeof(const char*));
     return generator;
 }
 
@@ -577,9 +588,39 @@ void codegen_generate_global_variable_for_primitive(struct node* node)
     }
 }
 
+void codegen_generate_global_variable_for_union(struct node* node)
+{
+    if (node->var.val != NULL)
+    {
+        compiler_error(current_process, "We dont yet support values for unions");
+        return;
+    }
+
+    char tmp_buf[256];
+    asm_push("%s: %s 0", node->var.name, asm_keyword_for_size(variable_size(node), tmp_buf));
+}
+
+void codegen_generate_variable_for_array(struct node* node)
+{
+    if(node->var.val != NULL)
+    {
+        compiler_error(current_process, "We don't support values for arrays yet");
+        return;
+    }
+
+    char tmp_buf[256];
+    asm_push("%s: %s 0",node->var.name,asm_keyword_for_size(variable_size(node),tmp_buf));
+}
+
 void codegen_generate_global_variable(struct node* node)
 {
     asm_push("; %s %s", node->var.type.type_str, node->var.name);
+    if(node->var.type.flags & DATATYPE_FLAG_IS_ARRAY)
+    {
+        codegen_generate_variable_for_array(node);
+        codegen_new_scope_entity(node, 0, 0);
+        return;
+    }
     switch (node->var.type.type)
     {
         case DATA_TYPE_VOID:
@@ -590,6 +631,10 @@ void codegen_generate_global_variable(struct node* node)
             codegen_generate_global_variable_for_primitive(node);
             break;
         
+        case DATA_TYPE_UNION:
+            codegen_generate_global_variable_for_union(node);
+            break;
+
         case DATA_TYPE_STRUCT:
             codegen_generate_global_variable_for_struct(node);
             break;
@@ -599,6 +644,9 @@ void codegen_generate_global_variable(struct node* node)
             compiler_error(current_process, "Doubles and floats are not supported in our subset of C\n");
             break;
     }
+
+    assert(node->type == NODE_TYPE_VARIABLE);
+    codegen_new_scope_entity(node,0,0);
 }
 
 void codegen_generate_struct(struct node* node)
@@ -606,6 +654,26 @@ void codegen_generate_struct(struct node* node)
     if (node->flags & NODE_FLAG_HAS_VARIABLE_COMBINED)
     {
         codegen_generate_global_variable(node->_struct.var);
+    }
+}
+
+void codegen_generate_union(struct node* node)
+{
+    if (node->flags & NODE_FLAG_HAS_VARIABLE_COMBINED)
+    {
+        codegen_generate_global_variable(node->_union.var);
+    }
+}
+
+void codegen_generate_global_variable_list(struct node* var_list_node)
+{
+    assert(var_list_node->type == NODE_TYPE_VARIABLE_LIST);
+    vector_set_peek_pointer(var_list_node->var_list.list,0);
+    struct node* var_node = vector_peek_ptr(var_list_node->var_list.list);
+    while(var_node)
+    {
+        codegen_generate_global_variable(var_node);
+        var_node = vector_peek_ptr(var_list_node->var_list.list);
     }
 }
 
@@ -618,9 +686,18 @@ void codegen_generate_data_section_part(struct node* node)
         codegen_generate_global_variable(node);
         break;
     
+    case NODE_TYPE_VARIABLE_LIST:
+        codegen_generate_global_variable_list(node);
+        break;
+    
     case NODE_TYPE_STRUCT:
         codegen_generate_struct(node);
         break;
+
+    case NODE_TYPE_UNION:
+        codegen_generate_union(node);
+        break;
+
     default:
         break;
     }
@@ -686,7 +763,7 @@ bool codegen_is_exp_root(struct history* history)
 
 void codegen_reduce_register(const char* reg,size_t size,bool is_signed)
 {
-    if(size != DATA_SIZE_DWORD)
+    if(size != DATA_SIZE_DWORD && size > 0)
     {
         const char* ins = "movsx";  // 这是一个汇编指令，用于有符号扩展
         if(!is_signed)
@@ -820,6 +897,44 @@ void codegen_generate_normal_unary(struct node* node, struct history* history)
     else if(S_EQ(node->unary.op,"*"))
     {
         codegen_generate_unary_indirection(node,history);
+    }
+    else if(S_EQ(node->unary.op,"++"))
+    {
+        if(node->unary.flags & UNARY_FLAG_IS_LEFT_OPERANDED_UNARY)
+        {
+            // a++
+            asm_push_ins_push_with_data("eax",STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE,"result_value",0,&(struct stack_frame_data){.dtype=last_dtype});
+            asm_push("inc eax");
+            asm_push_ins_push_with_data("eax",STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE,"result_value",0,&(struct stack_frame_data){.dtype = last_dtype});
+            codegen_generate_assignment_part(node->unary.operand,"=",history);
+        }
+        else
+        {
+            // ++a
+            asm_push("inc eax");
+            asm_push_ins_push_with_data("eax",STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE,"result_value",0,&(struct stack_frame_data){.dtype=last_dtype});
+            codegen_generate_assignment_part(node->unary.operand,"=",history);
+            asm_push_ins_push_with_data("eax",STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE,"result_value",0,&(struct stack_frame_data){.dtype=last_dtype});
+        }
+    }
+    else if(S_EQ(node->unary.op,"--"))
+    {
+        if (node->unary.flags & UNARY_FLAG_IS_LEFT_OPERANDED_UNARY)
+        {
+            // a--
+            asm_push_ins_push_with_data("eax", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value", 0, &(struct stack_frame_data){.dtype = last_dtype});
+            asm_push("dec eax");
+            asm_push_ins_push_with_data("eax", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value", 0, &(struct stack_frame_data){.dtype = last_dtype});
+            codegen_generate_assignment_part(node->unary.operand, "=", history);
+        }
+        else
+        {
+            // --a
+            asm_push("dec eax");
+            asm_push_ins_push_with_data("eax", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value", 0, &(struct stack_frame_data){.dtype = last_dtype});
+            codegen_generate_assignment_part(node->unary.operand, "=", history);
+            asm_push_ins_push_with_data("eax", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value", 0, &(struct stack_frame_data){.dtype = last_dtype});
+        }
     }
 }
 
@@ -1045,6 +1160,9 @@ const char* codegen_byte_word_or_dword_or_ddword(size_t size,const char** reg_to
 
 void codegen_generate_assignment_instruction_for_operator(const char* mov_type_keyword, const char* address, const char* reg_to_use, const char* op, bool is_signed)
 {
+
+    assert(reg_to_use != "ecx");
+
     if(S_EQ(op,"="))
     {
         asm_push("mov %s [%s], %s",mov_type_keyword,address,reg_to_use);
@@ -1052,6 +1170,59 @@ void codegen_generate_assignment_instruction_for_operator(const char* mov_type_k
     else if(S_EQ(op,"+="))
     {
         asm_push("add %s [%s], %s",mov_type_keyword,address,reg_to_use);
+    }
+    else if (S_EQ(op, "-="))
+    {
+        asm_push("sub %s [%s], %s", mov_type_keyword, address, reg_to_use);
+    }
+    else if (S_EQ(op, "*="))
+    {
+        asm_push("mov ecx, %s", reg_to_use);    // 保存乘数到 ecx
+        asm_push("mov eax, [%s]", address);     // 将内存地址的值移动到 eax
+        if (is_signed)
+        {
+            // 如果是有符号数，使用有符号乘法
+            asm_push("imul %s", reg_to_use);
+        }
+        else
+        {
+            // 如果是无符号数，使用无符号乘法
+            asm_push("mul %s", reg_to_use);
+        }
+        // 将结果存储回内存地址
+        asm_push("mov %s [%s], eax", mov_type_keyword, address);
+    }
+    else if (S_EQ(op, "/="))
+    {   
+        asm_push("mov ecx, eax");               // 将 eax 的值保存到 ecx，用作除数
+        asm_push("mov eax, [%s]", address);     // 将内存地址的值移动到 eax
+        asm_push("cdq");                        // 扩展 eax 的符号到 edx:eax，为有符号除法做准备
+        if (is_signed)
+        {
+            asm_push("idiv ecx");
+        }
+        else
+        {
+            asm_push("div ecx");
+        }
+        asm_push("mov %s [%s], %s", mov_type_keyword, address, reg_to_use);
+    }
+    else if (S_EQ(op, "<<="))
+    {
+        asm_push("mov ecx, %s", reg_to_use);                    // 保存左移位数到 ecx
+        asm_push("sal %s [%s], cl", mov_type_keyword, address); // 将内存地址的值左移
+    }
+    else if (S_EQ(op, ">>="))
+    {
+        asm_push("mov ecx, %s", reg_to_use);                        // 保存右移位数到 ecx
+        if (is_signed)
+        {
+            asm_push("sar %s [%s], cl", mov_type_keyword, address); // 如果是有符号数，使用算术右移
+        }
+        else
+        {
+            asm_push("shr %s [%s], cl", mov_type_keyword, address); // 如果是无符号数，使用逻辑右移
+        }
     }
 }
 
@@ -1318,10 +1489,13 @@ void codegen_generate_entity_access_for_function_call(struct resolver_result* re
     vector_set_peek_pointer_end(entity->func_call_data.arguments);
 
     struct node* node = vector_peek_ptr(entity->func_call_data.arguments);
+    int function_call_label_id = codegen_label_count();
+    codegen_data_section_add("function_call_%i: dd 0", function_call_label_id);
+
     // 生成汇编指令，将值移动到 ebx 寄存器，并准备将其作为函数调用的结果
     asm_push_ins_pop("ebx",STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE,"result_value");
     // 将 ebx 寄存器的值移动到 ecx 寄存器，ecx 通常用于存储函数调用的地址
-    asm_push("mov ecx, ebx");
+    asm_push("mov dword [function_call_%i], ebx", function_call_label_id);
     if(datatype_is_struct_or_union_non_pointer(&entity->dtype))
     {
         asm_push("; SUBTRACT ROOM FOR RETURNED STRUCTURE/UNION DATATYPE");
@@ -1335,7 +1509,7 @@ void codegen_generate_entity_access_for_function_call(struct resolver_result* re
         node = vector_peek_ptr(entity->func_call_data.arguments);
     }
 
-    asm_push("call ecx");   // 生成汇编指令，调用 ecx 寄存器指向的函数地址
+    asm_push("call [function_call_%i]", function_call_label_id);
     size_t stack_size = entity->func_call_data.stack_size;
     if(datatype_is_struct_or_union_non_pointer(&entity->dtype))
     {
@@ -1457,7 +1631,16 @@ bool codegen_resolve_node_for_value(struct node *node, struct history *history)
 
     struct datatype dtype;
     assert(asm_datatype_back(&dtype));
-    if(datatype_is_struct_or_union_non_pointer(&dtype))
+    if (result->flags & RESOLVER_RESULT_FLAG_DOES_GET_ADDRESS)
+    {
+        // Do nothing
+    }
+    else if(result->last_entity->type == RESOLVER_ENTITY_TYPE_FUNCTION_CALL && 
+        datatype_is_struct_or_union_non_pointer(&result->last_entity->dtype))
+    {
+            // Do nothing.
+    }
+    else if (datatype_is_struct_or_union_non_pointer(&dtype))
     {
         codegen_generate_structure_push(result->last_entity,history,0);
     }
@@ -1694,7 +1877,14 @@ void codegen_gen_math_for_value(const char* reg, const char* value, int flags, b
     else if(flags & EXPRESSION_IS_BITSHIFT_RIGHT)
     {
         value = codegen_sub_register(value, DATA_SIZE_BYTE);
-        asm_push("sar %s, %s", reg, value);
+        if(is_signed)
+        {
+            asm_push("sar %s, %s",reg,value);
+        }
+        else
+        {
+            asm_push("chr %s, %s",reg,value);
+        }
     }
     else if(flags & EXPRESSION_IS_BITWISE_AND)
     {
@@ -2104,7 +2294,7 @@ void codegen_generate_switch_stmt_case_jumps(struct node* node)
     // 如果switch语句包含default情况，则生成跳转到default的指令
     if(node->stmt.switch_stmt.has_default_case)
     {
-        asm_push("jmp .switch_stmt_%i_case_default",codegen_switch_id);
+        asm_push("jmp .switch_stmt_%i_case_default", codegen_switch_id());
     }
 
     codegen_goto_exit_point_maintain_stack(node);
@@ -2155,6 +2345,18 @@ void codegen_generate_label(struct node* node)
     asm_push("label_%s:",node->label.name->sval);
 }
 
+void codegen_generate_scope_variable_for_list(struct node* var_list_node)
+{
+    assert(var_list_node->type == NODE_TYPE_VARIABLE_LIST);
+    vector_set_peek_pointer(var_list_node->var_list.list, 0);
+    struct node* var_node = vector_peek_ptr(var_list_node->var_list.list);
+    while(var_node)
+    {
+        codegen_generate_scope_variable(var_node);
+        var_node = vector_peek_ptr(var_list_node->var_list.list);
+    }   
+}
+
 void codegen_generate_statement(struct node* node, struct history* history)
 {
     switch(node->type)
@@ -2169,6 +2371,10 @@ void codegen_generate_statement(struct node* node, struct history* history)
 
         case NODE_TYPE_VARIABLE:
             codegen_generate_scope_variable(node);
+            break;
+        
+        case NODE_TYPE_VARIABLE_LIST:
+            codegen_generate_scope_variable_for_list(node);
             break;
 
         case NODE_TYPE_STATEMENT_IF:
@@ -2377,6 +2583,19 @@ void codegen_generate_rod()
     codegen_write_strings();
 }
 
+void codegen_generate_data_section_add_ons()
+{
+    asm_push("section .data");
+    vector_set_peek_pointer(current_process->generator->custom_data_section,0);
+    const char* str = vector_peek_ptr(current_process->generator->custom_data_section);
+    while(str)
+    {
+        asm_push(str);
+        str = vector_peek_ptr(current_process->generator->custom_data_section);
+    }
+
+}
+
 int codegen(struct compile_process* process)
 {
     current_process = process;
@@ -2391,6 +2610,7 @@ int codegen(struct compile_process* process)
 
     codegen_finish_scope();
 
+    codegen_generate_data_section_add_ons();
     // Generate read only data
     // 只读数据段
     codegen_generate_rod();

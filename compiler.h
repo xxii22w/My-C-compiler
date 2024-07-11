@@ -234,6 +234,9 @@ struct code_generator
     // vector of struct codegen_exit_point*
     struct vector* exit_points;
 
+    // vector of const char* that will go in the data section
+    struct vector* custom_data_section;
+
     // vector of struct response*
     struct vector* responses;
 };
@@ -430,9 +433,15 @@ void stackframe_sub(struct node* func_node, int type, const char* name, size_t a
 void stackframe_add(struct node* func_node, int type, const char* name, size_t amount);
 void stackframe_assert_empty(struct node* func_node);
 
+enum
+{
+    UNARY_FLAG_IS_LEFT_OPERANDED_UNARY = 0b00000001,
+};
+
 struct node;
 struct unary 
 {
+    int flags;
     // "*" 用于指针访问。**** 即使是多指针访问，也只有第一个运算符在这里
     const char* op;
     struct node* operand;
@@ -1150,8 +1159,11 @@ void make_do_while_node(struct node* body_node,struct node* exp_node);
 void make_return_node(struct node* exp_node);
 void make_if_node(struct node* cond_node,struct node* body_node,struct node* next_node);
 void make_else_node(struct node* body_node);
-void make_unary_node(const char* op,struct node* operand_node);
+void make_unary_node(const char* op,struct node* operand_node,int flags);
+bool is_left_operanded_unary_operator(const char* op);
 
+bool is_parentheses(const char* op);
+bool unary_operand_compatible(struct token* token);
 struct node* node_pop();
 struct node* node_peek();
 struct node* node_peek_or_null();

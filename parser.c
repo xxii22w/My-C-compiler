@@ -70,7 +70,7 @@ struct history
     int flags;
     struct parser_history_switch
     {
-        struct history_cases case_data;
+        struct history_cases* case_data;
     }_switch;
 };
 
@@ -96,7 +96,8 @@ static struct history *history_down(struct history *history, int flags)
 struct parser_history_switch parser_new_switch_statement(struct history *history)
 {
     memset(&history->_switch,0,sizeof(&history->_switch));
-    history->_switch.case_data.cases = vector_create(sizeof(struct parsed_switch_case));
+    history->_switch.case_data = calloc(1, sizeof(struct history_cases));
+    history->_switch.case_data->cases = vector_create(sizeof(struct parsed_switch_case));
     history->flags |= HISTORY_FLAG_IN_SWITCH_STATEMENT;
     return history->_switch;
 }
@@ -111,7 +112,7 @@ void parser_register_case(struct history* history,struct node* case_node)
     assert(history->flags & HISTORY_FLAG_IN_SWITCH_STATEMENT);
     struct parsed_switch_case scase;
     scase.index = case_node->stmt._case.exp->llnum;
-    vector_push(history->_switch.case_data.cases,&scase);
+    vector_push(history->_switch.case_data->cases, &scase);
 }
 
 int parse_expressionable_single(struct history *history);
@@ -373,9 +374,9 @@ bool parser_is_unary_operator(const char* op)
 void parse_for_indirection_unary()
 {
     int depth = parser_get_pointer_depth();
-    parse_expressionable(history_begin(0));
+    parse_expressionable(history_begin(EXPRESSION_IS_UNARY));
     struct node* unary_operand_node = node_pop();
-    make_unary_node("*",unary_operand_node);
+    make_unary_node("*",unary_operand_node,0);
 
     struct node* unary_node = node_pop();
     unary_node->unary.indirection.depth = depth;
@@ -385,9 +386,9 @@ void parse_for_indirection_unary()
 void parse_for_normal_unary()
 {
     const char* unary_op = token_next()->sval;
-    parse_expressionable(history_begin(0));
+    parse_expressionable(history_begin(EXPRESSION_IS_UNARY));
     struct node* unary_operand_node = node_pop();
-    make_unary_node(unary_op,unary_operand_node); 
+    make_unary_node(unary_op,unary_operand_node,0); 
 }
 
 void parse_for_unary()
@@ -401,6 +402,11 @@ void parse_for_unary()
 
     parse_for_normal_unary();
     parser_deal_with_additional_expression();
+}
+
+void parse_for_left_operanded_unaary(struct node* left_operand_node,const char* unary_op)
+{
+    make_unary_node(unary_op,left_operand_node,UNARY_FLAG_IS_LEFT_OPERANDED_UNARY);
 }
 
 // 将 123 + 456 分解，传入
@@ -425,6 +431,13 @@ void parse_exp_normal(struct history *history)
 
     // Pop off the left node
     node_pop();
+
+    if (is_left_operanded_unary_operator(op))
+    {
+        parse_for_left_operanded_unaary(node_left, op);   
+        return;
+    }
+
     node_left->flags |= NODE_FLAG_INSIDE_EXPRESSION;
     
     if(token_peek_next()->type == TOKEN_TYPE_OPERATOR)
@@ -551,6 +564,10 @@ void parse_for_cast()
 
 int parse_exp(struct history *history)
 {
+    if(history->flags & EXPRESSION_IS_UNARY && !unary_operand_compatible(token_peek_next()))
+    {
+        return -1;
+    }
     if (S_EQ(token_peek_next()->sval, "("))
     {
         parse_for_parentheses(history);
@@ -1692,7 +1709,7 @@ void parse_default(struct history* history)
     expect_keyword("default");
     expect_sym(':');
     make_default_node();
-    history->_switch.case_data.has_default_case = true;
+    history->_switch.case_data->has_default_case = true;
 }
 
 void parse_case(struct history* history)
@@ -1721,7 +1738,7 @@ void parse_switch(struct history* history)
     parse_body(&variable_size,history);
     struct node* body_node = node_pop();
     // Make the switch node
-    make_switch_node(switch_exp_node, body_node,  _switch.case_data.cases, _switch.case_data.has_default_case);
+    make_switch_node(switch_exp_node, body_node, _switch.case_data->cases, _switch.case_data->has_default_case);
     parser_end_switch_statement(&_switch);
 }
 
@@ -1948,8 +1965,7 @@ int parse_expressionable_single(struct history *history)
         break;
 
     case TOKEN_TYPE_OPERATOR:
-        parse_exp(history);
-        res = 0;
+        res = parse_exp(history);
         break;
 
     case TOKEN_TYPE_KEYWORD:

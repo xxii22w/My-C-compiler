@@ -184,9 +184,9 @@ void make_else_node(struct node* body_node)
     node_create(&(struct node){.type=NODE_TYPE_STATEMENT_ELSE,.stmt.else_stmt.body_node=body_node});
 }
 
-void make_unary_node(const char* op, struct node* operand_node)
+void make_unary_node(const char* op, struct node* operand_node,int flags)
 {
-    node_create(&(struct node){.type=NODE_TYPE_UNARY,.unary.op=op, .unary.operand=operand_node});
+    node_create(&(struct node){.type=NODE_TYPE_UNARY,.unary.op=op, .unary.operand=operand_node,.unary.flags=flags});
 }
 
 struct node* node_from_sym(struct symbol* sym)
@@ -340,7 +340,9 @@ bool is_node_assignment(struct node* node)
            S_EQ(node->exp.op, "+=") ||
            S_EQ(node->exp.op, "-=") ||
            S_EQ(node->exp.op, "/=") ||
-           S_EQ(node->exp.op, "*=");
+           S_EQ(node->exp.op, "*=") ||
+           S_EQ(node->exp.op, ">>=") ||
+           S_EQ(node->exp.op, "<<=");
 }
 
 bool node_valid(struct node* node)

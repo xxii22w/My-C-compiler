@@ -1,8 +1,11 @@
-int printf(const char* s);
-int abc[50];
+int printf(const char* s,...);
+
+int special(char c1,int i1)
+{
+    return c1 + i1;
+}
+
 int main()
 {
-    int x;
-    abc[1] = 50;
-    return abc[1];
+    printf("%i\n",special(22,10));
 }
