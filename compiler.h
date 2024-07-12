@@ -89,6 +89,11 @@ enum
     NUMBER_TYPE_DOUBLE
 };
 
+enum
+{
+    TOKEN_FLAG_IS_CUSTOM_OPERATOR = 0b00000001
+};
+
 struct token
 {
     int type;
@@ -1118,6 +1123,7 @@ bool is_logical_operator(const char* op);
 bool is_logical_node(struct node* node);
 
 bool token_is_operator(struct token* token, const char* val);
+bool is_operator_token(struct token* token);
 
 struct node* node_create(struct node* _node);
 struct node* node_from_sym(struct symbol* sym);
@@ -1291,6 +1297,48 @@ void symresolver_build_for_node(struct compile_process* process, struct node* no
 struct symbol* symresolver_get_symbol(struct compile_process* process, const char* name);
 struct symbol* symresolver_get_symbol_for_native_function(struct compile_process* process, const char* name);
 
+struct expressionable;
+struct expressionable_callbacks;
+struct expressionable_config;
+
+struct expressionable_callbacks* expressionable_callbacks(struct expressionable* expressionable);
+void* expressionable_node_pop(struct expressionable* expressionable);
+struct token* expressionable_token_next(struct expressionable* expressionable);
+
+void expressionable_node_push(struct expressionable *expressionable, void *node_ptr);
+void *expressionable_node_peek_or_null(struct expressionable *expressionable);
+void expressionable_ignore_nl(struct expressionable *expressionable, struct token *next_token);
+struct token *expressionable_peek_next(struct expressionable *expressionable);
+bool expressionable_token_next_is_operator(struct expressionable *expressionable, const char *op);
+void expressionable_init(struct expressionable* expressionable, struct vector* token_vector, struct vector* node_vector, struct expressionable_config* config, int flags);
+struct expressionable* expressionable_create(struct expressionable_config* config, struct vector* token_vector, struct vector* node_vector, int flags);
+int expressionable_parse_number(struct expressionable *expressionable);
+int expressionable_parse_identifier(struct expressionable *expressionable);
+
+bool expressionable_parser_left_op_has_priority(const char *op_left, const char *op_right);
+void expressionable_parser_node_shift_children_left(struct expressionable *expressionable, void *node);
+
+void expressionable_parser_reorder_expression(struct expressionable *expressionable, void **node_out);
+
+bool expressionable_generic_type_is_value_expressionable(int type);
+void expressionable_expect_op(struct expressionable *expressionable, const char *op);
+
+void expressionable_expect_sym(struct expressionable *expressionable, char c);
+void expressionable_deal_with_additional_expression(struct expressionable *expressionable);
+void expressionable_parse_parentheses(struct expressionable *expressionable);
+int expressionable_get_pointer_depth(struct expressionable *expressionable);
+void expressionable_parse_for_indirection_unary(struct expressionable *expressionable);
+
+void expressionable_parse_for_normal_unary(struct expressionable *expressionable);
+void expressionable_parse_unary(struct expressionable *expressionable);
+void expressionable_parse_for_operator(struct expressionable *expressionable);
+void expressionable_parse_tenary(struct expressionable* expressionable);
+int expressionable_parse_exp(struct expressionable *expressionable, struct token *token);
+int expressionable_parse_token(struct expressionable *expressionable, struct token *token, int flags);
+int expressionable_parse_single_with_flags(struct expressionable *expressionable, int flags);
+int expressionable_parse_single(struct expressionable *expressionable);
+void expressionable_parse(struct expressionable *expressionable);
+
 size_t function_node_argument_stack_addition(struct node* node);
 
 #define TOTAL_OPERATOR_GROUPS 14
@@ -1306,6 +1354,82 @@ struct expressionable_op_precedence_group
 {
     char* operators[MAX_OPERATORS_IN_GROUP];
     int associtivity;
+};
+
+enum
+{
+    EXPRESSIONABLE_GENERIC_TYPE_NUMBER,
+    EXPRESSIONABLE_GENERIC_TYPE_IDENTIFIER,
+    EXPRESSIONABLE_GENERIC_TYPE_UNARY,
+    EXPRESSIONABLE_GENERIC_TYPE_PARENTHESES,
+    EXPRESSIONABLE_GENERIC_TYPE_EXPRESSION,
+    EXPRESSIONABLE_GENERIC_TYPE_NON_GENERIC
+};
+
+enum
+{
+    EXPRESSIONABLE_IS_SINGLE,
+    EXPRESSIONABLE_IS_PARENTHESES
+};
+
+struct expressionable;
+
+typedef void*(*EXPRESSIONABLE_HANDLE_NUMBER)(struct expressionable* expressionable);
+typedef void*(*EXPRESSIONABLE_HANDLE_IDENTIFIER)(struct expressionable* expressionable);
+typedef void (*EXPRESSIONABLE_MAKE_EXPRESSION_NODE)(struct expressionable* expressionable, void* left_node_ptr, void* right_node_ptr, const char* op);
+typedef void (*EXPRESSIONABLE_MAKE_TENARY_NODE)(struct expressionable* expressionable, void* true_result_node, void* false_result_node);
+typedef void (*EXPRESSIONABLE_MAKE_PARENTHESES_NODE)(struct expressionable* expressionable, void* node_ptr);
+typedef void (*EXPRESSIONABLE_MAKE_UNARY_NODE)(struct expressionable* expressionable, const char* op, void* right_operand_node_ptr);
+typedef void (*EXPRESSIONABLE_MAKE_UNARY_INDIRECTION_NODE)(struct expressionable* expressionable, int ptr_depth, void* right_operand_node_ptr);
+typedef int (*EXPRESSIONABLE_GET_NODE_TYPE)(struct expressionable* expressionable, void* node);
+typedef void* (*EXPRESSIONABLE_GET_LEFT_NODE)(struct expressionable* expressionable, void* target_node);
+typedef void* (*EXPRESSIONABLE_GET_RIGHT_NODE)(struct expressionable* expressionable, void* target_node);
+typedef const char* (*EXPRESSIONABLE_GET_NODE_OPERATOR)(struct expressionable* expressionable, void* target_node);
+typedef void** (*EXPRESSIONABLE_GET_NODE_ADDRESS)(struct expressionable* expressionable, void* target_node);
+typedef void (*EXPRESSIONABLE_SET_EXPRESSION_NODE)(struct expressionable* expressionable, void* node, void* left_node, void* right_node, const char* op );
+
+typedef bool (*EXPRESSIONABLE_SHOULD_JOIN_NODES)(struct expressionable* expressionable, void* previous_node, void* node);
+typedef void* (*EXPRESSIONABLE_JOIN_NODES)(struct expressionable* expressionable, void* previous_node, void* node);
+typedef bool (*EXPRESSIONABLE_EXPECTING_ADDITIONAL_NODE)(struct expressionable* expressionable, void* node);
+typedef bool (*EXPRESSIONABLE_IS_CUSTOM_OPERATOR)(struct expressionable* expressionable, struct token* token);
+
+struct expressionable_config
+{
+    struct expressionable_callbacks
+    {
+        // function pointers
+        EXPRESSIONABLE_HANDLE_NUMBER handle_number_callback;
+        EXPRESSIONABLE_HANDLE_IDENTIFIER handle_identifier_callback;
+        EXPRESSIONABLE_MAKE_EXPRESSION_NODE make_expression_node;
+        EXPRESSIONABLE_MAKE_PARENTHESES_NODE make_parentheses_node;
+        EXPRESSIONABLE_MAKE_UNARY_NODE make_unary_node;
+        EXPRESSIONABLE_MAKE_UNARY_INDIRECTION_NODE make_unary_indirection_node;
+        EXPRESSIONABLE_MAKE_TENARY_NODE make_tenary_node;
+        EXPRESSIONABLE_GET_NODE_TYPE get_node_type;
+        EXPRESSIONABLE_GET_LEFT_NODE get_left_node;
+        EXPRESSIONABLE_GET_RIGHT_NODE get_right_node;
+        EXPRESSIONABLE_GET_NODE_OPERATOR get_node_operator;
+        EXPRESSIONABLE_GET_NODE_ADDRESS get_left_node_address;
+        EXPRESSIONABLE_GET_NODE_ADDRESS get_right_node_address;
+        EXPRESSIONABLE_SET_EXPRESSION_NODE set_exp_node;
+        EXPRESSIONABLE_SHOULD_JOIN_NODES should_join_nodes;
+        EXPRESSIONABLE_JOIN_NODES join_nodes;
+        EXPRESSIONABLE_EXPECTING_ADDITIONAL_NODE expecting_additional_node;
+        EXPRESSIONABLE_IS_CUSTOM_OPERATOR is_custom_operator;
+    }callbacks;
+};
+
+enum
+{
+    EXPRESSIONABLE_FLAG_IS_PREPROCESSOR_EXPRESSION = 0b00000001,
+};
+
+struct expressionable 
+{
+    int flags;
+    struct expressionable_config config;
+    struct vector* token_vec;
+    struct vector* node_vec_out;
 };
 
 struct fixup;

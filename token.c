@@ -25,6 +25,11 @@ bool token_is_symbol(struct token* token, char c)
     return token && token->type == TOKEN_TYPE_SYMBOL && token->cval == c;
 }
 
+bool is_operator_token(struct token* token)
+{
+    return token && token->type == TOKEN_TYPE_OPERATOR;
+}
+
 bool token_is_nl_or_comment_or_newline_seperator(struct token *token)
 {
     if (!token)
