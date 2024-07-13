@@ -1,7 +1,4 @@
-#define SUM(x, y) x+y
-
-int main(int argc,char** argv)
+int main()
 {
-    argc = SUM(5,5);
-    return 0;
+    return !0;
 }
