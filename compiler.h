@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <string.h>
+#include <linux/limits.h>
 
 #define S_EQ(str, str2) \
         (str && str2 && (strcmp(str, str2) == 0))
@@ -62,6 +63,7 @@ struct pos
     case '\\':      \
     case ')':       \
     case ']'      
+
 enum
 {
     LEXICAL_ANALYSIS_ALL_OK,
@@ -247,6 +249,98 @@ struct code_generator
 };
 
 struct resolver_process;
+
+struct preprocessor;
+struct preprocessor_definition;
+struct preprocessor_function_argument;
+struct preprocessor_included_file;
+
+
+typedef void (*PREPROCESSOR_STATIC_INCLUDE_HANDLER_POST_CREATION)(struct preprocessor* preprocessor, struct preprocessor_included_file* included_file);
+
+enum
+{
+    PREPROCESSOR_DEFINITION_STANDARD,
+    PREPROCESSOR_DEFINITION_MACRO_FUNCTION,
+    PREPROCESSOR_DEFINITION_NATIVE_CALLBACK,
+    PREPROCESSOR_DEFINITION_TYPEDEF
+};
+
+struct preprocessor;
+struct preprocessor_definition;
+struct preprocessor_function_argument
+{
+    // Tokens for this argument struct token
+    struct vector* tokens;
+};
+
+struct preprocessor_function_arguments
+{
+    // Vector of struct preprocessor_function_argument
+    struct vector* arguments;
+};
+
+typedef int (*PREPROCESSOR_DEFINITION_NATIVE_CALL_EVALUATE)(struct preprocessor_definition* definition, struct preprocessor_function_arguments* arguments);
+typedef struct vector* (*PREPROCESSOR_DEFINITION_NATIVE_CALL_VALUE)(struct preprocessor_definition* definition, struct preprocessor_function_arguments* arguments);
+
+struct preprocessor_definition
+{
+    // I.e standard or macro function
+    int type;
+
+    // The name i.e #define ABC ABC is the name
+    const char* name;
+    union 
+    {
+        struct standard_preprocessor_definition
+        {
+            // A vecor of definition value tokens. Values can be multiple lines
+            // vector of struct token
+            struct vector* value;
+
+            // A vector of const char* representing function arguments in order
+            // for example: ABC(a, b, c) 
+            struct vector* arguments;
+        } standard;
+
+        struct typedef_preprocessor_definition
+        {
+            struct vector* value;
+        } _typedef;
+
+        struct native_callback_preprocessor_definition
+        {
+            PREPROCESSOR_DEFINITION_NATIVE_CALL_EVALUATE evaluate;
+            PREPROCESSOR_DEFINITION_NATIVE_CALL_VALUE value;
+        } native;;
+    };
+    
+    struct preprocessor* preprocessor;
+};
+
+struct preprocessor_included_file
+{
+    char filename[PATH_MAX];
+};
+
+struct preprocessor
+{
+    // A vector of struct preprocessor_definition*
+    struct vector* definitions;
+    // Vector of struct preprocessor_node*
+    struct vector* exp_vector;
+
+    struct expressionable* expressionable;
+
+    struct compile_process* compiler;
+
+    // A vector of included files struct preprocessor_included_file*
+    struct vector* includes;
+};
+
+struct preprocessor* preprocessor_create(struct compile_process* compiler);
+int preprocessor_run(struct compile_process* compiler);
+
 struct compile_process
 {
     // The flags in regards to how this file should be compiled
@@ -259,6 +353,10 @@ struct compile_process
         const char* abs_path;
     } cfile;
 
+    // 未篡改令牌向量，包含定义和源代码令牌，预处理器 
+    // 将浏览该向量，并在完成后填充 "token_vec "向量
+    // 完成后，预处理器将检查该向量并填充 "token_vec "向量
+    struct vector* token_vec_original;
 
     // A vector of tokens from lexical analysis.
     struct vector* token_vec;
@@ -286,6 +384,11 @@ struct compile_process
     // 代码生成器的指针
     struct code_generator* generator;
     struct resolver_process* resolver;
+
+    // A vector of const char* that represents include directories
+    struct vector* include_dirs;
+    struct preprocess* preprocessor;
+
 };
 
 
@@ -1070,7 +1173,7 @@ enum
 };
 
 int compile_file(const char* filename, const char* out_filename, int flags);
-struct compile_process *compile_process_create(const char *filename, const char *filename_out, int flags);
+struct compile_process *compile_process_create(const char *filename, const char *filename_out, int flags,struct compile_process* parent_process);
 
 
 char compile_process_next_char(struct lex_process* lex_process);
@@ -1340,6 +1443,7 @@ int expressionable_parse_single(struct expressionable *expressionable);
 void expressionable_parse(struct expressionable *expressionable);
 
 size_t function_node_argument_stack_addition(struct node* node);
+long arithmetic(struct compile_process* compiler, long left_operand, long right_operand, const char* op, bool* success);
 
 #define TOTAL_OPERATOR_GROUPS 14
 #define MAX_OPERATORS_IN_GROUP 12

@@ -207,7 +207,7 @@ void expressionable_parser_reorder_expression(struct expressionable *expressiona
 
     int left_node_type = expressionable_callbacks(expressionable)->get_node_type(expressionable, left_node);
     int right_node_type = expressionable_callbacks(expressionable)->get_node_type(expressionable, right_node);
-    assert(left_node_type = 0);
+    assert(left_node_type >= 0);
     assert(right_node_type >= 0);
 
     if (left_node_type != EXPRESSIONABLE_GENERIC_TYPE_EXPRESSION && right_node &&
@@ -416,7 +416,7 @@ int expressionable_parse_exp(struct expressionable* expressionable,struct token*
     {
         expressionable_parse_parentheses(expressionable);
     }
-    else if(S_EQ(expressionable_peek_next(expressionable)->sval),"?")
+    else if(S_EQ(expressionable_peek_next(expressionable)->sval, "?"))
     {
         expressionable_parse_tenary(expressionable);
     }
@@ -424,7 +424,6 @@ int expressionable_parse_exp(struct expressionable* expressionable,struct token*
     {
         expressionable_parse_for_operator(expressionable);
     }
-    expressionable_parse_for_operator(expressionable);
     return 0;
 }
 
