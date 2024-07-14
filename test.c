@@ -1,12 +1,5 @@
-#include <stddef.h>
-
-struct dog
-{
-    int x;
-    int y;
-};
-
+#include <stdarg-internal.h>
 int main()
 {
-    return offsetof(struct dog, y);
+    test();
 }
