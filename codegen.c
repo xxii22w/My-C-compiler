@@ -31,7 +31,7 @@ struct generator x86_codegen = {
     .gen_exp=codegen_gen_exp,
     .end_exp=codegen_end_exp,
     .entity_address=codegen_entity_address,
-    .ret = asm_push_ins_with_datatype,
+    .ret=asm_push_ins_with_datatype,
     .private=&_x86_generator_private
 };
 
@@ -836,9 +836,9 @@ void codegen_generate_structure_push_or_return(struct resolver_entity* entity, s
 
 void codegen_gen_mem_access(struct node* node, int flags, struct resolver_entity* entity)
 {
-    if(flags & EXPRESSION_GET_ADDRESS)
+    if (flags & EXPRESSION_GET_ADDRESS)
     {
-        codegen_gen_mem_access_get_address(node,flags,entity);
+        codegen_gen_mem_access_get_address(node, flags, entity);
         return;
     }
 
@@ -857,7 +857,7 @@ void codegen_gen_mem_access(struct node* node, int flags, struct resolver_entity
     else
     {
         // We can push this straight to the stack
-        asm_push_ins_push_with_data("dword [%s]", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value", 0, &(struct stack_frame_data){.dtype=entity->dtype}, codegen_entity_private(entity)->address);
+        asm_push_ins_push_with_data("dword [%s]", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value", 0, &(struct stack_frame_data){.dtype = entity->dtype}, codegen_entity_private(entity)->address);
     }
 }
 
@@ -884,8 +884,8 @@ void codegen_generate_identifier(struct node *node, struct history *history)
 void codegen_generate_unary_address(struct node* node,struct history* history)
 {
     int flags = history->flags;
-    codegen_generate_expressionable(node->unary.operand,history_down(history,flags | EXPRESSION_GET_ADDRESS));
-    codegen_response_acknowledge(&(struct response){.flags=RESPONSE_FLAG_UNARY_GET_ADDRESS});
+    codegen_generate_expressionable(node->unary.operand, history_down(history, flags | EXPRESSION_GET_ADDRESS));
+    codegen_response_acknowledge(&(struct response){.flags = RESPONSE_FLAG_UNARY_GET_ADDRESS});
 }
 
 void codegen_generate_unary_indirection(struct node* node,struct history* history)
@@ -893,7 +893,7 @@ void codegen_generate_unary_indirection(struct node* node,struct history* histor
     const char* reg_to_use = "ebx";
     int flags = history->flags;
     codegen_response_expect();
-    codegen_generate_expressionable(node->unary.operand,history_down(history,flags | EXPRESSION_GET_ADDRESS | EXPRESSION_INDIRECTION));
+    codegen_generate_expressionable(node->unary.operand, history_down(history, flags | EXPRESSION_GET_ADDRESS | EXPRESSION_INDIRECTION));
     struct response* res = codegen_response_pull();     // 从响应队列中获取响应，并断言响应包含实体
     assert(codegen_response_has_entity(res));
     struct datatype operand_datatype;
@@ -902,7 +902,7 @@ void codegen_generate_unary_indirection(struct node* node,struct history* histor
 
     int depth = node->unary.indirection.depth;
     int real_depth = depth;
-    if(!(history->flags & EXPRESSION_GET_ADDRESS))
+    if (!(history->flags & EXPRESSION_GET_ADDRESS))
     {
         depth++;
     } 
@@ -1007,9 +1007,9 @@ void codegen_generate_unary(struct node* node,struct history* history)
         codegen_generate_unary_indirection(node,history);
         return;
     }
-    else if(op_is_address(node->unary.op))
+    else if (op_is_address(node->unary.op))
     {
-        codegen_generate_unary_address(node,history);
+        codegen_generate_unary_address(node, history);
         return;
     }
 
@@ -1324,14 +1324,14 @@ void codegen_generate_entity_access_start(struct resolver_result* result,struct 
     }
     else if(result->flags & RESOLVER_RESULT_FLAG_FIRST_ENTITY_LOAD_TO_EBX)
     {
-        if(root_assignment_entity->next && root_assignment_entity->next->flags & RESOLVER_ENTITY_FLAG_IS_POINTER_ARRAY_ENTITY)
+        if (root_assignment_entity->next && root_assignment_entity->next->flags & RESOLVER_ENTITY_FLAG_IS_POINTER_ARRAY_ENTITY)
         {
-            asm_push("mov ebx, [%s]",result->base.address);
+            asm_push("mov ebx, [%s]", result->base.address);
         }
         else
         {
             // lea指令将地址加载到ebx
-            asm_push("lea ebx, [%s]",result->base.address);
+            asm_push("lea ebx, [%s]", result->base.address);
         }
         asm_push_ins_push_with_data("ebx",STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE,"result_value",0,&(struct stack_frame_data){.dtype=root_assignment_entity->dtype});
     }
@@ -1353,12 +1353,12 @@ void codegen_generate_entity_access_for_variable_or_general(struct resolver_resu
 int codegen_entity_rules(struct resolver_entity* last_entity,struct history* history)
 {
     int rule_flags = 0;
-    if(!last_entity)
+    if (!last_entity)
     {
         return 0;
     }
 
-    if(datatype_is_struct_or_union_non_pointer(&last_entity->dtype))
+    if (datatype_is_struct_or_union_non_pointer(&last_entity->dtype))
     {
         rule_flags |= CODEGEN_ENTITY_RULE_IS_STRUCT_OR_UNION_NON_POINTER;
     }
@@ -1367,11 +1367,11 @@ int codegen_entity_rules(struct resolver_entity* last_entity,struct history* his
     {
         rule_flags |= CODEGEN_ENTITY_RULE_IS_FUNCTION_CALL;
     }
-    else if(history->flags & EXPRESSION_GET_ADDRESS)
+    else if (history->flags & EXPRESSION_GET_ADDRESS)
     {
         rule_flags |= CODEGEN_ENTITY_RULE_IS_GET_ADDRESS;
     }
-    else if(last_entity->type == RESOLVER_ENTITY_TYPE_UNARY_GET_ADDRESS)
+    else if (last_entity->type == RESOLVER_ENTITY_TYPE_UNARY_GET_ADDRESS)
     {
         rule_flags |= CODEGEN_ENTITY_RULE_IS_GET_ADDRESS;
     }
@@ -1476,7 +1476,7 @@ void codegen_generate_entity_access_for_entity_for_assignment_left_operand(struc
         break;
 
     case RESOLVER_ENTITY_TYPE_UNARY_GET_ADDRESS:
-        codegen_generate_entity_access_for_unary_get_address(result,entity);
+        codegen_generate_entity_access_for_unary_get_address(result, entity);
         break;
 
     case RESOLVER_ENTITY_TYPE_UNSUPPORTED:
@@ -1513,7 +1513,7 @@ void codegen_generate_move_struct(struct datatype* dtype, const char* base_addre
         char fmt[10];
         int chunk_offset = offset + (i * DATA_SIZE_DWORD);
         codegen_plus_or_minus_string_for_value(fmt,chunk_offset,sizeof(fmt));
-        asm_push("mov [%s%s], eax",base_address,fmt);
+        asm_push("mov [%s%s], eax", base_address, fmt);
     }
 }
 
@@ -1626,38 +1626,41 @@ void codegen_generate_entity_access_for_unary_get_address(struct resolver_result
     asm_push_ins_push_with_data("ebx",STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE,"result_value",0,&(struct stack_frame_data){.dtype=entity->dtype});
 }
 
-void codegen_generate_entity_access_for_entity(struct resolver_result* result,struct resolver_entity* entity,struct history* history)
+void codegen_generate_entity_access_for_entity(struct resolver_result *result, struct resolver_entity *entity, struct history *history)
 {
     switch (entity->type)
     {
-        case RESOLVER_ENTITY_TYPE_ARRAY_BRACKET:
-            codegen_generate_entity_access_array_bracket(result, entity);
-            break;
+    case RESOLVER_ENTITY_TYPE_ARRAY_BRACKET:
+        codegen_generate_entity_access_array_bracket(result, entity);
+        break;
 
-        case RESOLVER_ENTITY_TYPE_VARIABLE:
-        case RESOLVER_ENTITY_TYPE_GENERAL:
-            codegen_generate_entity_access_for_variable_or_general(result,entity);
-            break;
-        
-        case RESOLVER_ENTITY_TYPE_FUNCTION_CALL:
-            codegen_generate_entity_access_for_function_call(result, entity);
-            break;
-        
-        case RESOLVER_ENTITY_TYPE_UNARY_INDIRECTION:
-            codegen_generate_entity_access_for_unary_indirection(result,entity,history);
-            break;
-        
-        case RESOLVER_ENTITY_TYPE_UNSUPPORTED:
-            codegen_generate_entity_access_for_unsupported(result, entity);
-            break;
-        
-        case RESOLVER_ENTITY_TYPE_CAST:
-            codegen_generate_entity_access_for_cast(result, entity);
-            break;
-        
-        default:
-            compiler_error(current_process,"COMPILER BUG...");
-    
+    case RESOLVER_ENTITY_TYPE_VARIABLE:
+    case RESOLVER_ENTITY_TYPE_GENERAL:
+        codegen_generate_entity_access_for_variable_or_general(result, entity);
+        break;
+
+    case RESOLVER_ENTITY_TYPE_FUNCTION_CALL:
+        codegen_generate_entity_access_for_function_call(result, entity);
+        break;
+
+    case RESOLVER_ENTITY_TYPE_UNARY_INDIRECTION:
+        codegen_generate_entity_access_for_unary_indirection(result, entity, history);
+        break;
+
+    case RESOLVER_ENTITY_TYPE_UNARY_GET_ADDRESS:
+        codegen_generate_entity_access_for_unary_get_address(result, entity);
+        break;
+
+    case RESOLVER_ENTITY_TYPE_UNSUPPORTED:
+        codegen_generate_entity_access_for_unsupported(result, entity);
+        break;
+
+    case RESOLVER_ENTITY_TYPE_CAST:
+        codegen_generate_entity_access_for_cast(result, entity);
+        break;
+
+    default:
+        compiler_error(current_process, "COMPILER BUG...");
     }
 }
 
