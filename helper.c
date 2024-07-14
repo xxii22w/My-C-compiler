@@ -307,6 +307,18 @@ bool op_is_address(const char* op)
     return S_EQ(op,"&");
 }
 
+bool file_exists(const char* filename)
+{
+    FILE* f = fopen(filename,"r");
+    if(!f)
+    {
+        return false;
+    }
+
+    fclose(f);
+    return true;
+}
+
 struct datatype datatype_for_numeric()
 {
     struct datatype dtype = {};

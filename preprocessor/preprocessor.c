@@ -100,6 +100,7 @@ int preprocessor_evaluate(struct compile_process* compiler,struct preprocessor_n
 int preprocessor_handle_identifier_for_token_vector(struct compile_process* compiler, struct vector* src_vec, struct vector* dst_vec, struct token* token);
 struct vector *preprocessor_definition_value(struct preprocessor_definition *definition);
 void preprocessor_token_vec_push_src_resolve_definition(struct compile_process *compiler, struct vector *src_vec, struct vector *dst_vec, struct token *token);
+void preprocessor_macro_function_push_something(struct compile_process *compiler, struct preprocessor_definition *definition, struct preprocessor_function_arguments *arguments, struct token *arg_token, struct vector *definition_token_vec, struct vector *value_vec_target);
 
 void preprocessor_execute_warning(struct compile_process* compiler, const char* msg)
 {
@@ -236,9 +237,9 @@ void preprocessor_token_vec_push_src_token(struct compile_process* compiler,stru
 void preprocessor_initialize(struct preprocessor* preprocessor)
 {
     memset(preprocessor, 0, sizeof(struct preprocessor));
-    preprocessor->definitions = vector_create(sizeof(struct preprocessor_definition*));
-    preprocessor->includes = vector_create(sizeof(struct preprocessor_included_file*));
-    #warning "Create preprocessor default definitions"
+    preprocessor->definitions = vector_create(sizeof(struct preprocessor_definition *));
+    preprocessor->includes = vector_create(sizeof(struct preprocessor_included_file *));
+    preprocessor_create_definitions(preprocessor);
 }
 
 struct preprocessor* preprocessor_create(struct compile_process* compiler)
@@ -550,6 +551,16 @@ bool preprocessor_token_is_ifndef(struct token* token)
     return (S_EQ(token->sval, "ifndef"));
 }
 
+bool preprocessor_token_is_include(struct token* token)
+{
+    if(!preprocessor_token_is_preprocessor_keyword(token))
+    {
+        return false;
+    }
+
+    return (S_EQ(token->sval,"include"));
+}
+
 struct buffer* preprocessor_multi_value_string(struct compile_process* compiler)
 {
     struct buffer* buffer = buffer_create();
@@ -638,6 +649,18 @@ struct preprocessor_definition* preprocessor_definition_create(const char* name,
     return definition;
 }
 
+struct preprocessor_definition* preprocessor_definition_create_native(const char* name,PREPROCESSOR_DEFINITION_NATIVE_CALL_EVALUATE evaluate,PREPROCESSOR_DEFINITION_NATIVE_CALL_VALUE value,struct preprocessor* preprocessor)
+{
+    struct preprocessor_definition* definition = calloc(sizeof(struct preprocessor_definition),1);
+    definition->type = PREPROCESSOR_DEFINITION_NATIVE_CALLBACK;
+    definition->name = name;
+    definition->native.evaluate = evaluate;
+    definition->native.value = value;
+    definition->preprocessor = preprocessor;
+    vector_push(preprocessor->definitions,&definition);
+    return definition;
+}
+
 struct preprocessor_definition* preprocessor_definition_create_typedef(const char* name,struct vector* value_vec,struct preprocessor* preprocessor)
 {
     struct preprocessor_definition* definition = calloc(1,sizeof(struct preprocessor_definition));
@@ -685,12 +708,16 @@ struct vector* preprocessor_definition_value_for_typedef(struct preprocessor_def
     return preprocessor_definition_value_for_typedef_or_other(definition);
 }
 
-struct vector* preprocessor_definition_value_with_arguments(struct preprocessor_definition* definition,struct preprocessor_function_arguments* argument)
+struct vector* preprocessor_definition_value_for_native(struct preprocessor_definition* definition,struct preprocessor_function_arguments* arguments)
+{
+    return definition->native.value(definition,arguments);
+}
+
+struct vector* preprocessor_definition_value_with_arguments(struct preprocessor_definition* definition,struct preprocessor_function_arguments* arguments)
 {
     if(definition->type == PREPROCESSOR_DEFINITION_NATIVE_CALLBACK)
     {
-        #warning "implement definition value for native."
-        return NULL;
+        return preprocessor_definition_value_for_native(definition,arguments);
     }
     else if(definition->type == PREPROCESSOR_DEFINITION_TYPEDEF)
     {
@@ -727,6 +754,11 @@ int preprocessor_definition_evaluated_value_for_standard(struct preprocessor_def
     return token->llnum;
 }
 
+int preprocessor_definition_evaluated_value_for_native(struct preprocessor_definition* definition,struct preprocessor_function_arguments* arguments)
+{
+    return definition->native.evaluate(definition,arguments);
+}
+
 int preprocessor_definition_evaluated_value(struct preprocessor_definition* definition, struct preprocessor_function_arguments* arguments)
 {
     if (definition->type == PREPROCESSOR_DEFINITION_STANDARD)
@@ -735,8 +767,7 @@ int preprocessor_definition_evaluated_value(struct preprocessor_definition* defi
     }
     else if(definition->type == PREPROCESSOR_DEFINITION_NATIVE_CALLBACK)
     {
-        #warning "implement native callbacks.
-        return -1;
+        return preprocessor_definition_evaluated_value_for_native(definition,arguments);
     }
 
     compiler_error(definition->preprocessor->compiler, "The definition cannot be evaluated into a number");
@@ -1233,9 +1264,68 @@ int preprocessor_macro_function_push_something_definition(struct compile_process
     return -1;
 }
 
+void preprocessor_handle_concat_part(struct compile_process* compiler,struct preprocessor_definition* definition,struct preprocessor_function_arguments* arguments,struct token* token,struct vector* definition_token_vec,struct vector* value_vec_target)
+{
+    preprocessor_macro_function_push_argument(compiler,definition,arguments,token,definition_token_vec,value_vec_target);
+}
+
+void preprocessor_handle_concat_finalize(struct compile_process* compiler,struct vector* tmp_vec,struct vector* value_vec_target)
+{
+    struct vector* joined_vec = tokens_join_vector(compiler,tmp_vec);
+    vector_insert(value_vec_target,joined_vec,0);
+}
+
+void preprocessor_handle_concat(struct compile_process *compiler, struct preprocessor_definition *definition,
+                                struct preprocessor_function_arguments *arguments, struct token *arg_token, struct vector *definition_token_vec,
+                                struct vector *value_vec_target)
+{
+
+    // Lets skip the hashtags ##
+    vector_peek(definition_token_vec);
+    vector_peek(definition_token_vec);
+
+    struct token *right_token = vector_peek(definition_token_vec);
+    if (!right_token)
+    {
+        compiler_error(compiler, "No right operand provided for concat preprocessor operator ##");
+    }
+
+    struct vector *tmp_vec = vector_create(sizeof(struct token));
+    preprocessor_handle_concat_part(compiler, definition, arguments, arg_token, definition_token_vec, tmp_vec);
+    preprocessor_handle_concat_part(compiler, definition, arguments, right_token, definition_token_vec, tmp_vec);
+    preprocessor_handle_concat_finalize(compiler, tmp_vec, value_vec_target);
+}
+
+bool preprocessor_is_next_double_hash(struct vector *definition_token_vec)
+{
+    bool is_double_hash = true;
+    vector_save(definition_token_vec);
+    struct token* next_token = vector_peek(definition_token_vec);
+    if(!token_is_symbol(next_token,'#'))
+    {
+        is_double_hash = false;
+        goto out;
+    }
+
+    next_token = vector_peek(definition_token_vec);
+    if(!token_is_symbol(next_token,'#'))
+    {
+        is_double_hash = false;
+        goto out;
+    }
+
+out:
+    vector_restore(definition_token_vec);
+    return is_double_hash;
+}
+
 void preprocessor_macro_function_push_something(struct compile_process* compiler, struct preprocessor_definition* definition, struct preprocessor_function_arguments* arguments, struct token* arg_token, struct vector* definition_token_vec, struct vector* value_vec_target)
 {
-    #warning "process concat"
+    if (preprocessor_is_next_double_hash(definition_token_vec))
+    {
+        preprocessor_handle_concat(compiler, definition, arguments, arg_token, definition_token_vec, value_vec_target);
+        return;
+    }
 
     int res = preprocessor_macro_function_push_something_definition(compiler, definition, arguments, arg_token, definition_token_vec, value_vec_target);
     if (res == -1)
@@ -1341,7 +1431,14 @@ int preprocessor_evaluate_exp(struct compile_process *compiler, struct preproces
     long left_operand = preprocessor_evaluate(compiler, node->exp.left);
     if (node->exp.right->type == PREPROCESSOR_TENARY_NODE)
     {
-        #warning "handle tenary node"
+        if(left_operand)
+        {
+            return preprocessor_evaluate(compiler,node->exp.right->tenary.true_node);
+        }
+        else
+        {
+            return preprocessor_evaluate(compiler,node->exp.right->tenary.false_node);
+        }
     }
 
     long right_operand = preprocessor_evaluate(compiler, node->exp.right);
@@ -1377,6 +1474,61 @@ int preprocessor_evaluate_parentheses(struct compile_process* compiler,struct pr
     return preprocessor_evaluate(compiler,node->parenthesis.exp);
 }
 
+const char* preprocessor_pull_string_from(struct preprocessor_node* root_node)
+{
+    const char* result = NULL;
+    switch (root_node->type)
+    {
+    case PREPROCESSOR_PARENTHESES_NODE:
+        result = preprocessor_pull_string_from(root_node->parenthesis.exp);
+        break;
+    
+    case PREPROCESSOR_KEYWORD_NODE:
+    case PREPROCESSOR_IDENTIFIER_NODE:
+        result = root_node->sval;
+        break;
+    
+    case PREPROCESSOR_EXPRESSION_NODE:
+        result = preprocessor_pull_string_from(root_node->exp.left);
+        break;
+    
+    }
+
+    return result;
+}
+
+const char* preprocessor_pull_defined_value(struct compile_process* compiler,struct preprocessor_node* joined_node)
+{
+    const char* val = preprocessor_pull_string_from(joined_node->joined.right);
+    if(!val)
+    {
+        compiler_error(compiler, "Expecting an identifier node for defined keyword right operand");
+    }
+    return val;
+}
+
+int preprocessor_evaluate_joined_node_defined(struct compile_process* compiler,struct preprocessor_node* node)
+{
+    const char* right_val = preprocessor_pull_defined_value(compiler,node);
+    return preprocessor_get_definition(compiler->preprocessor,right_val) != NULL;
+}
+
+int preprocessor_evaluate_joined_node(struct compile_process* compiler,struct preprocessor_node* node)
+{
+    if(node->joined.left->type != PREPROCESSOR_KEYWORD_NODE)
+    {
+        return 0;
+    }
+
+    int res = 0;
+    if(S_EQ(node->joined.left->sval,"defined"))
+    {
+        res = preprocessor_evaluate_joined_node_defined(compiler,node);
+    }
+
+    return res;
+}
+
 int preprocessor_evaluate(struct compile_process* compiler,struct preprocessor_node* root_node)
 {
     struct preprocessor_node* current = root_node;
@@ -1397,6 +1549,9 @@ int preprocessor_evaluate(struct compile_process* compiler,struct preprocessor_n
         break;
     case PREPROCESSOR_PARENTHESES_NODE:
         result = preprocessor_evaluate_parentheses(compiler, current);
+        break;
+    case PREPROCESSOR_JOINED_NODE:
+        result = preprocessor_evaluate_joined_node(compiler, current);
         break;
     }
 
@@ -1444,6 +1599,42 @@ void preprocessor_handle_ifndef_token(struct compile_process* compiler)
 
 }
 
+struct token* preprocessor_next_token_skip_nl(struct compile_process* compiler)
+{
+    struct token* token = preprocessor_next_token(compiler);
+    while(token && token->type == TOKEN_TYPE_NEWLINE)
+    {
+        token = preprocessor_next_token(compiler);
+    }
+
+    return token;
+}
+
+void preprocessor_handle_include_token(struct compile_process* compiler)
+{
+    struct token* file_path_token = preprocessor_next_token_skip_nl(compiler);
+    if (!file_path_token)
+    {
+        compiler_error(compiler, "No file path provided for include");
+    }
+
+    struct compile_process* new_compile_process = compile_include(file_path_token->sval, compiler);
+    if(!new_compile_process)
+    {
+        PREPROCESSOR_STATIC_INCLUDE_HANDLER_POST_CREATION handler = 
+            preprocessor_static_include_handler_for(file_path_token->sval);
+        if (handler)
+        {
+            // Handle it
+            preprocessor_create_static_include(compiler->preprocessor, file_path_token->sval, handler);
+            return;
+        }
+        compiler_error(compiler, "The file does not exist %s unable to include", file_path_token->sval);
+    }
+
+    preprocessor_token_vec_push_src(compiler,new_compile_process);
+}
+
 int preprocessor_handle_hashtag_token(struct compile_process* compiler, struct token* token)
 {
     bool is_preprocessed = false;
@@ -1483,6 +1674,11 @@ int preprocessor_handle_hashtag_token(struct compile_process* compiler, struct t
     else if(preprocessor_token_is_ifndef(next_token))
     {
         preprocessor_handle_ifndef_token(compiler);
+        is_preprocessed = true;
+    }
+    else if(preprocessor_token_is_include(next_token))
+    {
+        preprocessor_handle_include_token(compiler);
         is_preprocessed = true;
     }
     // 返回是否进行了预处理的标志
@@ -1661,7 +1857,7 @@ void preprocessor_handle_token(struct compile_process* compiler, struct token* t
 
 int preprocessor_run(struct compile_process* compiler)
 {
-    #warning "add our source file as an included file"
+    preprocessor_add_included_file(compiler->preprocessor, compiler->cfile.abs_path);
     vector_set_peek_pointer(compiler->token_vec_original, 0);
     struct token* token = preprocessor_next_token(compiler);
     while(token)

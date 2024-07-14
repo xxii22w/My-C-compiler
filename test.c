@@ -1,4 +1,12 @@
+#include <stddef.h>
+
+struct dog
+{
+    int x;
+    int y;
+};
+
 int main()
 {
-    return !0;
+    return offsetof(struct dog, y);
 }

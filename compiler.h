@@ -5,6 +5,9 @@
 #include <stdbool.h>
 #include <string.h>
 #include <linux/limits.h>
+#include <assert.h>
+
+#define FAIL_ERR(message) assert(0 == 1 && message)
 
 #define S_EQ(str, str2) \
         (str && str2 && (strcmp(str, str2) == 0))
@@ -325,6 +328,10 @@ struct preprocessor_included_file
 {
     char filename[PATH_MAX];
 };
+
+// funtion pointers
+typedef void(*PREPROCESSOR_STATIC_INCLUDE_HANDLER_POST_CREATION)(struct preprocessor* preprocessor,struct preprocessor_included_file* included_file);
+PREPROCESSOR_STATIC_INCLUDE_HANDLER_POST_CREATION preprocessor_static_include_handler_for(const char* filename);
 
 struct preprocessor
 {
@@ -1177,6 +1184,10 @@ enum
 
 int compile_file(const char* filename, const char* out_filename, int flags);
 struct compile_process *compile_process_create(const char *filename, const char *filename_out, int flags,struct compile_process* parent_process);
+const char* compiler_include_dir_begin(struct compile_process* process);
+const char* compiler_include_dir_next(struct compile_process* process);
+struct compile_process* compile_include(const char* filename,struct compile_process* parent_process);
+void compiler_setup_default_include_directories(struct vector* include_vec);
 
 
 char compile_process_next_char(struct lex_process* lex_process);
@@ -1208,6 +1219,7 @@ struct lex_process* tokens_build_for_string(struct compile_process* compiler, co
 bool token_is_keyword(struct token* token, const char* value);
 bool token_is_identifier(struct token* token);
 bool token_is_symbol(struct token* token, char c);
+struct vector* tokens_join_vector(struct compile_process* compiler, struct vector* token_vec);
 
 bool token_is_nl_or_comment_or_newline_seperator(struct token *token);
 bool keyword_is_datatype(const char *str);
@@ -1381,6 +1393,14 @@ int align_value(int val, int to);
 int align_value_treat_positive(int val, int to);
 int compute_sum_padding(struct vector* vec);
 
+// Preprocessor
+void preprocessor_create_definition(struct preprocessor* preprocessor);
+struct token* preprocessor_previous_token(struct compile_process* compiler);
+struct vector *preprocessor_build_value_vector_for_integer(int value);
+struct preprocessor_definition *preprocessor_definition_create_native(const char *name,
+                                                                      PREPROCESSOR_DEFINITION_NATIVE_CALL_EVALUATE evaluate,
+                                                                      PREPROCESSOR_DEFINITION_NATIVE_CALL_VALUE value,
+                                                                      struct preprocessor *preprocessor);
 
 struct scope* scope_new(struct compile_process* process, int flags);
 struct scope* scope_create_root(struct compile_process* process);
@@ -1595,5 +1615,6 @@ bool fixup_resolve(struct fixup* fixup);
 void* fixup_private(struct fixup* fixup);
 bool fixups_resolve(struct fixup_system* system);
 
-
+// Helpers
+bool file_exists(const char* filename);
 #endif
