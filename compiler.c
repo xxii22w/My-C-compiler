@@ -8,6 +8,17 @@ struct lex_process_functions compiler_lex_functions = {
     .push_char=compile_process_push_char
 };
 
+void compiler_node_error(struct node* node, const char* msg, ...)
+{
+    va_list args;
+    va_start(args, msg);
+    vfprintf(stderr, msg, args);
+    va_end(args);
+
+    fprintf(stderr, " on line %i, col %i in file %s\n", node->pos.line, node->pos.col, node->pos.filename);
+    exit(-1);
+}
+
 void compiler_error(struct compile_process* compiler, const char* msg, ...)
 {
     va_list args;
@@ -27,16 +38,16 @@ void compiler_warning(struct compile_process* compiler, const char* msg, ...)
     fprintf(stderr, " on line %i, col %i in file %s\n", compiler->pos.line, compiler->pos.col, compiler->pos.filename);
 }
 
-struct compile_process* compile_include_for_include_dir(const char* include_dir,const char* filename,struct compile_process* parent_process)
+struct compile_process* compile_include_for_include_dir(const char* include_dir, const char* filename, struct compile_process* parent_process)
 {
     char tmp_filename[512];
-    sprintf(tmp_filename,"%s/%s",include_dir,filename);
-    if(file_exists(tmp_filename))
+    sprintf(tmp_filename, "%s/%s", include_dir, filename);
+    if (file_exists(tmp_filename))
     {
         filename = tmp_filename;
     }
     struct compile_process* process = compile_process_create(filename, NULL, parent_process->flags, parent_process);
-    if(!process)
+    if (!process)
     {
         return NULL;
     }
@@ -59,20 +70,24 @@ struct compile_process* compile_include_for_include_dir(const char* include_dir,
     }
 
     return process;
-
 }
+/**
+ * @brief Includes a file to be compiled, returns a new compile process that represents the file to be compiled
+ * 
+ * Note: Only lexical analysis, and preprocessing are done for compiler includes
+ * Parsing and code generation are excluded.
+ * @param filename 
+ * @param parent_process 
+ * @return struct compile_process* 
+ */
 
-//  包括一个要编译的文件，返回一个新的编译进程，表示要编译的文件
-//   
-//  注意：编译器只进行词法分析和预处理。
-//  不包括解析和代码生成。
-struct compile_process* compile_include(const char* filename,struct compile_process* parent_process)
+struct compile_process* compile_include(const char* filename, struct compile_process* parent_process)
 {
     struct compile_process* new_process = NULL;
     const char* include_dir = compiler_include_dir_begin(parent_process);
     while(include_dir && !new_process)
     {
-        new_process = compile_include_for_include_dir(include_dir,filename,parent_process);
+        new_process = compile_include_for_include_dir(include_dir, filename, parent_process);
         include_dir = compiler_include_dir_next(parent_process);
     }
 
@@ -106,6 +121,10 @@ int compile_file(const char* filename, const char* out_filename, int flags)
     }
 
     // Preform parsing
+    if (validate(process) != VALIDATION_ALL_OK)
+    {
+        return COMPILER_FAILED_WITH_ERRORS;
+    }
 
     if(parse(process) != PARSE_ALL_OK)
     {

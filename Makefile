@@ -1,4 +1,4 @@
-OBJECTS= ./build/compiler.o ./build/cprocess.o ./build/rdefault.o ./build/lexer.o ./build/token.o ./build/lex_process.o ./build/parser.o ./build/scope.o ./build/symresolver.o ./build/codegen.o ./build/stackframe.o ./build/resolver.o ./build/fixup.o ./build/array.o ./build/datatype.o ./build/node.o ./build/expressionable.o ./build/helper.o ./build/helpers/buffer.o ./build/helpers/vector.o ./build/preprocessor/preprocessor.o ./build/preprocessor/static-include.o ./build/preprocessor/static-includes/stdarg.o ./build/preprocessor/static-includes/stddef.o ./build/preprocessor/native.o
+OBJECTS= ./build/compiler.o ./build/cprocess.o ./build/rdefault.o ./build/validator.o ./build/lexer.o ./build/token.o ./build/lex_process.o ./build/parser.o ./build/scope.o ./build/symresolver.o ./build/codegen.o ./build/stackframe.o ./build/resolver.o ./build/fixup.o ./build/array.o ./build/datatype.o ./build/node.o ./build/expressionable.o ./build/helper.o ./build/helpers/buffer.o ./build/helpers/vector.o ./build/preprocessor/preprocessor.o ./build/preprocessor/static-include.o ./build/preprocessor/static-includes/stdarg.o ./build/preprocessor/static-includes/stddef.o ./build/preprocessor/native.o
 INCLUDES= -I./
 
 all: ${OBJECTS}
@@ -15,6 +15,9 @@ all: ${OBJECTS}
 
 ./build/lexer.o: ./lexer.c
 	gcc lexer.c ${INCLUDES} -o ./build/lexer.o -g -c
+
+./build/validator.o: ./validator.c
+	gcc validator.c ${INCLUDES} -o ./build/validator.o -g -c
 
 ./build/token.o: ./token.c
 	gcc token.c ${INCLUDES} -o ./build/token.o -g -c

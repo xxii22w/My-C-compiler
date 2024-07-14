@@ -553,12 +553,12 @@ bool preprocessor_token_is_ifndef(struct token* token)
 
 bool preprocessor_token_is_include(struct token* token)
 {
-    if(!preprocessor_token_is_preprocessor_keyword(token))
+    if (!preprocessor_token_is_preprocessor_keyword(token))
     {
         return false;
     }
 
-    return (S_EQ(token->sval,"include"));
+    return (S_EQ(token->sval, "include"));
 }
 
 struct buffer* preprocessor_multi_value_string(struct compile_process* compiler)
@@ -1619,7 +1619,7 @@ void preprocessor_handle_include_token(struct compile_process* compiler)
     }
 
     struct compile_process* new_compile_process = compile_include(file_path_token->sval, compiler);
-    if(!new_compile_process)
+    if (!new_compile_process)
     {
         PREPROCESSOR_STATIC_INCLUDE_HANDLER_POST_CREATION handler = 
             preprocessor_static_include_handler_for(file_path_token->sval);
@@ -1629,11 +1629,13 @@ void preprocessor_handle_include_token(struct compile_process* compiler)
             preprocessor_create_static_include(compiler->preprocessor, file_path_token->sval, handler);
             return;
         }
+
         compiler_error(compiler, "The file does not exist %s unable to include", file_path_token->sval);
     }
 
-    preprocessor_token_vec_push_src(compiler,new_compile_process);
+    preprocessor_token_vec_push_src(compiler, new_compile_process->token_vec);
 }
+
 
 int preprocessor_handle_hashtag_token(struct compile_process* compiler, struct token* token)
 {

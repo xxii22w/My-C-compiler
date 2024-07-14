@@ -309,8 +309,8 @@ bool op_is_address(const char* op)
 
 bool file_exists(const char* filename)
 {
-    FILE* f = fopen(filename,"r");
-    if(!f)
+    FILE* f = fopen(filename, "r");
+    if (!f)
     {
         return false;
     }

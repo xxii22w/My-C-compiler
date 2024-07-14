@@ -468,6 +468,12 @@ enum
 
 enum
 {
+    VALIDATION_ALL_OK,
+    VALIDATION_GENERAL_ERROR
+};
+
+enum
+{
     CODEGEN_ALL_OK,
     CODEGEN_GENERAL_ERROR
 };
@@ -1258,7 +1264,7 @@ char compile_process_next_char(struct lex_process* lex_process);
 char compile_process_peek_char(struct lex_process* lex_process);
 void compile_process_push_char(struct lex_process* lex_process, char c);
 
-
+void compiler_node_error(struct node* node, const char* msg, ...);
 void compiler_error(struct compile_process* compiler, const char* msg, ...);
 void compiler_warning(struct compile_process* compiler, const char* msg, ...);
 
@@ -1270,6 +1276,9 @@ int lex(struct lex_process* process);
 int parse(struct compile_process* process);
 int codegen(struct compile_process* process);
 struct code_generator* codegenerator_new(struct compile_process* process);
+
+// Validator
+int validate(struct compile_process* process);
 
 /**
  * @brief Builds tokens for the input string.
@@ -1289,6 +1298,7 @@ bool token_is_nl_or_comment_or_newline_seperator(struct token *token);
 bool keyword_is_datatype(const char *str);
 bool token_is_primitive_keyword(struct token* token);
 
+bool datatype_is_void_no_ptr(struct datatype* dtype);
 void datatype_set_void(struct datatype* dtype);
 bool datatype_is_struct_or_union_for_name(const char* name);
 size_t datatype_size_for_array_access(struct datatype* dtype);
@@ -1399,6 +1409,8 @@ struct resolver_process *resolver_new_process(struct compile_process *compiler, 
 struct resolver_entity *resolver_new_entity_for_var_node(struct resolver_process *process, struct node *var_node, void *private, int offset);
 struct resolver_entity *resolver_register_function(struct resolver_process *process, struct node *func_node, void *private);
 struct resolver_scope *resolver_new_scope(struct resolver_process *resolver, void *private, int flags);
+struct resolver_entity* resolver_get_variable_from_local_scope(struct resolver_process* resolver, const char* var_name);
+
 void resolver_finish_scope(struct resolver_process *resolver);
 struct resolver_result* resolver_follow(struct resolver_process* resolver,struct node* node);
 bool resolver_result_ok(struct resolver_result* result);

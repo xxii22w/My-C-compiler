@@ -14,7 +14,7 @@ const char* compiler_include_dir_begin(struct compile_process* process)
 
 const char* compiler_include_dir_next(struct compile_process* process)
 {
-    const char* dir = vector_peek_ptr(process->include_dirs);
+    const char* dir =vector_peek_ptr(process->include_dirs);
     return dir;
 }
 
