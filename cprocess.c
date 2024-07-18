@@ -3,7 +3,7 @@
 #include "compiler.h"
 #include "helpers/vector.h"
 
-const char* default_include_dirs[] = {"./pc_includes", "../pc_includes", "/usr/include/peach-includes", "/usr/include"};
+const char* default_include_dirs[] = {"./pc_includes", "../pc_includes", "/usr/include"};
 
 const char* compiler_include_dir_begin(struct compile_process* process)
 {

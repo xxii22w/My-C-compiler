@@ -2,7 +2,7 @@ OBJECTS= ./build/compiler.o ./build/cprocess.o ./build/rdefault.o ./build/valida
 INCLUDES= -I./
 
 all: ${OBJECTS}
-	gcc main.c ${INCLUDES} ${OBJECTS} -g -o ./main 
+	gcc main.c ${INCLUDES} ${OBJECTS} -g -o ./main  
 
 ./build/compiler.o: ./compiler.c
 	gcc compiler.c  ${INCLUDES} -o ./build/compiler.o -g -c
@@ -93,4 +93,5 @@ all: ${OBJECTS}
 
 clean:
 	rm ./main
+	rm test
 	rm -rf ${OBJECTS}

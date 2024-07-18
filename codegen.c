@@ -24,7 +24,7 @@ struct _x86_generator_private
         struct history* history;
     } remembered;
 
-}_x86_generator_private;
+} _x86_generator_private;
 
 struct generator x86_codegen = {
     .asm_push=asm_push,
@@ -45,7 +45,7 @@ enum
 
 enum
 {
-    RESPONSE_FLAG_ACKNOWLEDGEN = 0b00000001,
+    RESPONSE_FLAG_ACKNOWLEDGED = 0b00000001,
     RESPONSE_FLAG_PUSHED_STRUCTURE = 0b00000010,
     RESPONSE_FLAG_RESOLVED_ENTITY = 0b00000100,
     RESPONSE_FLAG_UNARY_GET_ADDRESS = 0b00001000,
@@ -102,13 +102,13 @@ void codegen_response_acknowledge(struct response* response_in)
         {
             res->data.resolved_entity = response_in->data.resolved_entity;
         }
-        res->flags |= RESPONSE_FLAG_ACKNOWLEDGEN;
+        res->flags |= RESPONSE_FLAG_ACKNOWLEDGED;
     }
 }
 
 bool codegen_response_acknowledged(struct response* res)
 {
-    return res && res->flags && RESPONSE_FLAG_ACKNOWLEDGEN;
+    return res && res->flags && RESPONSE_FLAG_ACKNOWLEDGED;
 }
 
 bool codegen_response_has_entity(struct response* res)
@@ -120,7 +120,7 @@ struct history_exp
 {
     const char* logical_start_op;
     char logical_end_label[20];
-    char logical_end_laabel_positive[20];
+    char logical_end_label_positive[20];
 };
 
 struct history
@@ -1994,7 +1994,7 @@ void codegen_setup_new_logical_expression(struct history* history,struct node* n
 {
     int label_index = codegen_label_count();
     sprintf(history->exp.logical_end_label,".endc_%i",label_index);
-    sprintf(history->exp.logical_end_laabel_positive,".endc_%i_positive",label_index);
+    sprintf(history->exp.logical_end_label_positive,".endc_%i_positive",label_index);
     history->exp.logical_start_op = node->exp.op;
     history->flags |= EXPRESSION_IN_LOGICAL_EXPRESSION;
 
@@ -2055,13 +2055,13 @@ void codegen_generate_exp_node_for_logical_arithmetic(struct node *node, struct 
     }
     codegen_generate_expressionable(node->exp.left,history_down(history,history->flags | EXPRESSION_IN_LOGICAL_EXPRESSION));
     asm_push_ins_pop("eax",STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE,"result_value");
-    codegen_generate_logical_cmp(node->exp.op,history->exp.logical_end_label,history->exp.logical_end_laabel_positive);
+    codegen_generate_logical_cmp(node->exp.op,history->exp.logical_end_label,history->exp.logical_end_label_positive);
     codegen_generate_expressionable(node->exp.right, history_down(history, history->flags | EXPRESSION_IN_LOGICAL_EXPRESSION));
     if (!is_logical_node(node->exp.right))
     {
         asm_push_ins_pop("eax", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value");
-        codegen_generate_logical_cmp(node->exp.op, history->exp.logical_end_label, history->exp.logical_end_laabel_positive);
-        codegen_generate_end_labels_for_logical_expression(node->exp.op, history->exp.logical_end_label, history->exp.logical_end_laabel_positive);
+        codegen_generate_logical_cmp(node->exp.op, history->exp.logical_end_label, history->exp.logical_end_label_positive);
+        codegen_generate_end_labels_for_logical_expression(node->exp.op, history->exp.logical_end_label, history->exp.logical_end_label_positive);
         asm_push_ins_push("eax", STACK_FRAME_ELEMENT_TYPE_PUSHED_VALUE, "result_value");
     }
 
